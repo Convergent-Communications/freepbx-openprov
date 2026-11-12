@@ -68,6 +68,12 @@ class Assets
 			throw new \InvalidArgumentException('Firmware must be a .rom/.zip/.bin file');
 		}
 		$sha = hash_file('sha256', $sourcePath);
+		// The same file uploaded again (e.g. a retry) is the existing asset.
+		foreach ($this->store->assets($kind) as $existing) {
+			if ($existing['sha256'] === $sha) {
+				return $existing + ['duplicate' => true];
+			}
+		}
 		// Phones choke on spaces and odd characters in file names.
 		$safe = preg_replace('/[^A-Za-z0-9._-]+/', '_', $name);
 		$stored = substr($sha, 0, 12) . '-' . $safe;
@@ -100,7 +106,12 @@ class Assets
 		if (!$a) {
 			return;
 		}
-		@unlink($this->path($a));
+		// Stored names are <sha prefix>-<name>, so two assets can share a file:
+		// only remove it when no other asset uses it.
+		$shared = array_filter($this->store->assets(), fn($o) => (int) $o['id'] !== $id && $o['filename'] === $a['filename']);
+		if (!$shared) {
+			@unlink($this->path($a));
+		}
 		foreach (glob($this->dir . '/cache/' . $id . '-*') ?: [] as $f) {
 			@unlink($f);
 		}

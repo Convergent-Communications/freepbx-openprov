@@ -569,6 +569,7 @@ $tests['render: ringtones by name, distinctive ring, expanded wallpaper, new set
 	$wav = tempnam(sys_get_temp_dir(), 'rt');
 	file_put_contents($wav, 'RIFF' . pack('V', 36) . 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, 8000, 16000, 2, 16) . 'data' . pack('V', 0));
 	$cg = $w->svc->addAsset('ringtone', 'caregiver.wav', $wav);
+	file_put_contents($wav, "\0", FILE_APPEND); // a different file (identical uploads are one asset)
 	$cl = $w->svc->addAsset('ringtone', 'client.wav', $wav);
 	phone($w, ['settings' => [
 		'ringtone' => 'Resource:Ring3.wav',
@@ -607,6 +608,8 @@ $tests['render: ringtones by name, distinctive ring, expanded wallpaper, new set
 		$png = tempnam(sys_get_temp_dir(), 'wp') . '.png';
 		imagepng($img, $png);
 		$a = $w->svc->addAsset('wallpaper', 'a.png', $png);
+		imagesetpixel($img, 1, 1, imagecolorallocate($img, 255, 0, 0));
+		imagepng($img, $png);
 		$b = $w->svc->addAsset('wallpaper', 'b.png', $png);
 		$w->svc->saveDevice(['mac' => MAC, 'settings' => ['wallpaper' => (string) $a['id']]]);
 		$cfg = kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
@@ -644,6 +647,27 @@ $tests['assets: chunked upload assembles in order'] = function () {
 	eq(hash('sha256', $rom), $a['sha256']);
 	throws(fn() => $w->svc->addAsset('firmware', 'x.rom', ['upload' => $id], []), 'Upload not found');
 	throws(fn() => $w->svc->uploadChunk('../../etc', 0, 'x'), 'Bad upload id');
+	// the same file again is the existing asset, not a duplicate
+	$id2 = str_repeat('cd', 16);
+	$w->svc->uploadChunk($id2, 0, $rom);
+	$again = $w->svc->addAsset('firmware', 'Yealink-T7X-185.87.0.37.rom', ['upload' => $id2], []);
+	eq($a['id'], $again['id']);
+	ok(!empty($again['duplicate']));
+	eq(1, count($w->store->assets('firmware')));
+};
+
+$tests['assets: deleting one of two assets sharing a file keeps the file'] = function () {
+	$w = world();
+	$f = tempnam(sys_get_temp_dir(), 'fw');
+	file_put_contents($f, 'rom');
+	$a = $w->svc->addAsset('firmware', 'same.rom', $f);
+	// a second row pointing at the same stored file (as older versions could create)
+	$id = $w->store->addAsset(['kind' => 'firmware', 'name' => 'same.rom', 'filename' => $a['filename'], 'mime' => 'x', 'size' => 3, 'sha256' => $a['sha256'], 'model' => '', 'version' => '']);
+	$w->svc->deleteAsset($id);
+	ok(is_file($w->assets->path($a)), 'file kept for the other asset');
+	$w->svc->deleteAsset($a['id']);
+	ok(!is_file($w->assets->path($a)), 'file removed with the last asset');
+	@unlink($f);
 };
 
 $tests['service: null template and parent are accepted'] = function () {

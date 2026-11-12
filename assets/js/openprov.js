@@ -696,9 +696,9 @@
 					if (file.size > CHUNK) say(`Uploading ${file.name}: ${Math.min(100, Math.round(((off + CHUNK) / file.size) * 100))}%`, 'info');
 					if (file.size === 0) break;
 				}
-				await api('asset.add', { kind: f.kind.value, name: file.name, model: f.model.value, upload: id });
+				const added = await api('asset.add', { kind: f.kind.value, name: file.name, model: f.model.value, upload: id });
 				delete cache.models;
-				say('Uploaded ' + file.name);
+				say(added.duplicate ? `${file.name} is already uploaded (as ${added.name}); nothing new was added.` : 'Uploaded ' + file.name, added.duplicate ? 'info' : 'success');
 				assets();
 			});
 		};

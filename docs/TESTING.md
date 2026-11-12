@@ -46,7 +46,7 @@ at 192.168.1.246, extension 212.
 | Wallpaper (resized to 800×480), custom ringtone | ✅ |
 | Firmware upgrade/downgrade (185.87.0.42 → 185.87.0.37) through OpenProv | ✅ About 2 minutes. After flashing, the phone reads only the header (1.8 MB) and stops, so there's no loop |
 | System Admin VPN tar (`openvpn.url`), registration through the tunnel | ✅ |
-| Updating a VPN phone with check-sync | ❌ on the T87W (185.87.x), a Yealink firmware issue, see [YEALINK-VPN-ISSUE.md](YEALINK-VPN-ISSUE.md). ✅ on the T57W (96.87.0.20): check-sync and provision-now both work with the VPN up |
+| Updating a VPN phone with check-sync | T87W (185.87.x): ❌ when the provisioning URL is the LAN IP or a DNS name, ✅ when it is the tunnel IP (10.8.0.1). See [YEALINK-VPN-ISSUE.md](YEALINK-VPN-ISSUE.md). T57W (96.87.0.20): ✅ with the LAN IP, VPN up |
 | T57W (96.87.0.20) with a self-signed certificate | ❌ The phone rejects it (TLS alert) because "Only Accept Trusted Certificates" is on by default. It works once the certificate is in the phone's trusted list. **Production needs a publicly trusted certificate (e.g. Let's Encrypt via certman), or the CA pushed to the phones, before the first HTTPS fetch** |
 | Provisioning MAC vs. ARP MAC | Wi-Fi models (T87W, T57W) answer ARP with a different MAC than the one they provision with (`80:5e:c0:f4:e6:e8` vs `80:5e:c0:d6:7c:5f`). Use the MAC from the label, the User-Agent or OpenProv's Activity tab |
 | Updating a VPN phone with a web-API reboot through the tunnel (10.8.0.2) | ✅ The phone rebooted. Boot-time provisioning races the VPN coming up (Yealink issue) |

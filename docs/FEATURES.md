@@ -7,7 +7,9 @@ Features come from two places:
 - **The Features tab (custom).** No files are needed, and they're stored in the database (`openprov_features`):
   - **Softkey that opens a URL:** a label, a URL (`{ext}`, `{pbx}`, `{mac}`) and the screens to show it on.
   - **Advanced:** any config lines, removal lines, global switches, variables, and an optional hidden key and softkey.
-- **Built-in:** JSON files in `models/<brand>/features/`, such as `captions.json`. They ship with the module, so the GUI can't edit or delete them. OpenProv turns each feature into ordinary settings (Settings → **Add-on features**), so templates, phone overrides and inheritance work as they do for everything else.
+- **Built-in:** JSON files in `models/<brand>/features/`, such as `captions.json`. They ship with the module, so the GUI can't edit or delete them.
+
+OpenProv turns each feature into ordinary settings (Settings → **Add-on features**), so templates, phone overrides and inheritance work as they do for everything else.
 
 The first feature is `captions.json`: a call-screen softkey that opens live captions in the phone's XML browser.
 

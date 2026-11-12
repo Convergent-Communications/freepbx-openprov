@@ -90,3 +90,21 @@ Verified through OpenProv over the VPN, by reading the phone's resource lists (`
   - `account.N.codec.opus.enable/priority` (by codec name, not slot number)
 - **Removing a key from the config does not revert it on the phone.** Send the default explicitly.
 - **After a reboot,** boot-time provisioning raced the tunnel once: status `autoprovision` for about 6 min. A check-sync then fetched within 1 s and returned to idle. On the next reboot, provisioning ran 2 s after the tunnel came up.
+
+## 2026-11-12 (evening): bootstrap, admin passwords, backup
+
+- **Bootstrap, new flow (factory-reset T87W, LAN):**
+  1. 17:11:39: bootstrap answer "credential issued", with no secrets.
+  2. 17:12:39: exactly 60 s later the phone came back with its own credential and got the full config, then wallpapers, ringtones, VPN profile and firmware.
+  3. The device is claimed.
+  - A reset phone still needs the PBX certificate added to its trusted certificates when the PBX uses a self-signed one.
+- **Per-device admin password:**
+  - On: the phone's password became the derived `1795316756`, and the shared one was rejected. OpenProv's screenshot through the tunnel still worked, re-learning the certificate pin. The pin was unchanged by the factory reset.
+  - Off again: the shared password works again about 20 s after the fetch, and the per-device one is rejected.
+- **Backup and restore:**
+  - `fwconsole backup --backupsingle=openprov --singlesaveto=<dir writable by asterisk>` produced 84 MB: all OpenProv tables (not the request log), `modulejson`, and the uploaded files.
+  - A scratch template added afterwards was gone after `--restoresingle`.
+  - Every row of every table matched the backup, except the phone's own fetch in between.
+- **Extension rename probe (FreePBX GUI):** a new Display Name changes `users.name`, `devices.description`, the SIP `callerid` ("Name <ext>"), AstDB `AMPUSER/<ext>/cidname` and the voicemail box name. User Management is untouched. OpenProv's `extension.update` changes exactly those (verified on 205, then restored).
+  - Saving the GUI form also rewrites every other field on it. On 201 that cleared the legacy `recording=force` and wrote about 20 default AstDB keys. Both were restored from a snapshot.
+  - Core's GraphQL `updateExtension` deletes and recreates the extension and its User Management user.

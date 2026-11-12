@@ -36,6 +36,14 @@ class Features
 			}
 		}
 		$catalog->setCustomFeatures($brand, $custom);
+		// A built-in feature removed from the module leaves a slot row with no
+		// definition: release it.
+		foreach ($rows as $id => $r) {
+			if ($r['def'] === null && !$catalog->isBuiltinFeature($brand, (string) $id)) {
+				$store->deleteFeatureRow((string) $id);
+				unset($rows[$id]);
+			}
+		}
 		$slots = array_map(fn($r) => (int) $r['slot'], $rows);
 		foreach (array_keys($catalog->features($brand)) as $id) {
 			if (!isset($slots[$id])) {

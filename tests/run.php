@@ -705,7 +705,8 @@ $tests['keys: overrides that match the template are dropped, so the phone follow
 
 $tests['features: captions on/off/unmanaged, slots, globals, models'] = function () {
 	$w = world();
-	ok(isset($w->catalog->features('yealink')['captions']), 'captions feature loaded');
+	$w->svc->saveFeature(['id' => 'captions', 'name' => 'Live captions', 'kind' => 'softkey_url', 'button_label' => 'Captions', 'url' => 'http://{pbx}:18990/captions/{ext}', 'states' => ['on_talk']]);
+	ok(isset($w->catalog->features('yealink')['captions']), 'captions feature defined');
 	phone($w);
 	$cfg = fn() => kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
 	ok(!isset($cfg()['softkey.1.enable']), 'blank = not managed: nothing written');
@@ -746,11 +747,13 @@ $tests['features: captions on/off/unmanaged, slots, globals, models'] = function
 
 $tests['features: custom softkeys from the GUI keep permanent slots'] = function () {
 	$w = world();
+	$w->svc->saveFeature(['id' => 'captions', 'name' => 'Live captions', 'kind' => 'softkey_url', 'button_label' => 'Captions', 'url' => 'http://{pbx}:18990/captions/{ext}', 'states' => ['on_talk']]);
 	$cam = $w->svc->saveFeature(['id' => 'door_cam', 'name' => 'Door camera', 'kind' => 'softkey_url', 'button_label' => 'Door', 'url' => 'http://{pbx}:8080/cam/{ext}', 'states' => ['idle', 'on_talk'], 'create' => true]);
 	eq(2, $cam['slot'], 'captions has slot 1');
+	eq(1, $w->catalog->features('yealink')['captions']['slot']);
 	$park = $w->svc->saveFeature(['id' => 'park_view', 'name' => 'Parked calls', 'kind' => 'softkey_url', 'button_label' => 'Parked', 'url' => 'http://x/p', 'states' => ['idle'], 'create' => true]);
 	eq(3, $park['slot']);
-	throws(fn() => $w->svc->saveFeature(['id' => 'captions', 'name' => 'x', 'kind' => 'softkey_url', 'button_label' => 'x', 'url' => 'http://x', 'states' => ['idle']]), 'built-in');
+	throws(fn() => $w->svc->saveFeature(['id' => 'captions', 'name' => 'x', 'kind' => 'softkey_url', 'button_label' => 'x', 'url' => 'http://x', 'states' => ['idle'], 'create' => true]), 'already exists');
 	throws(fn() => $w->svc->saveFeature(['id' => 'bad', 'name' => 'x', 'kind' => 'softkey_url', 'button_label' => 'x', 'url' => 'ftp://x', 'states' => ['idle']]), 'http');
 	phone($w, ['settings' => ['feature.captions' => '1', 'feature.door_cam' => '1', 'feature.park_view' => '1']]);
 	$w->settings->set('internal_host', '192.0.2.1');

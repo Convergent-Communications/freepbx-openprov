@@ -388,8 +388,7 @@ class Service
 			throw new \InvalidArgumentException("Unknown feature kind '$kind'");
 		}
 		$rows = $this->store->featureRows();
-		$isNew = !isset($rows[$id]) || $rows[$id]['def'] === null;
-		if ($isNew && !empty($in['create']) && isset($rows[$id])) {
+		if (!empty($in['create']) && isset($rows[$id]) && $rows[$id]['def'] !== null) {
 			throw new \InvalidArgumentException("A feature '$id' already exists");
 		}
 		$slot = $rows[$id]['slot'] ?? Features::freeSlot(array_map(fn($r) => (int) $r['slot'], $rows));

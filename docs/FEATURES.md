@@ -7,11 +7,17 @@ Features come from two places:
 - **The Features tab (custom).** No files are needed, and they're stored in the database (`openprov_features`):
   - **Softkey that opens a URL:** a label, a URL (`{ext}`, `{pbx}`, `{mac}`) and the screens to show it on.
   - **Advanced:** any config lines, removal lines, global switches, variables, and an optional hidden key and softkey.
-- **Built-in:** JSON files in `models/<brand>/features/`, such as `captions.json`. They ship with the module, so the GUI can't edit or delete them.
+- **Built-in:** JSON files in `models/<brand>/features/`. They ship with the module, so the GUI can't edit or delete them. None ship today: the captions softkey is defined in the Features tab (below).
 
 OpenProv turns each feature into ordinary settings (Settings → **Add-on features**), so templates, phone overrides and inheritance work as they do for everything else.
 
-The first feature is `captions.json`: a call-screen softkey that opens live captions in the phone's XML browser.
+**Captions** (lab and beta) is a custom "Softkey that opens a URL" feature:
+
+- id `captions`, softkey label `Captions`
+- URL `http://{pbx}:18990/captions/{ext}`
+- shown during a call
+
+It holds slot 1 (softkey 1, hidden key 84 on the T87W). The file format below is the same one the built-in loader reads; the Features tab's Advanced mode takes the same fields.
 
 ## Settings each feature gets
 

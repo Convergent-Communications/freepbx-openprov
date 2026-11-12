@@ -45,7 +45,8 @@ class Api
 			'devices.showing' => '{extension}',
 			'devices.forExtension' => '{extension} — phones with this extension on a line (a user\'s own phones)',
 			'assets.list' => '{kind?}',
-			'asset.add' => '{kind, name, path | base64}',
+			'asset.add' => '{kind, name, path (CLI only) | base64 | upload (id from upload.chunk)}',
+			'upload.chunk' => '(GUI) raw body = the next piece of a file; query id=<hex>&offset=<bytes so far>',
 			'asset.delete' => '{id}',
 			'events' => '{limit?, mac?}',
 			'discovered' => '{days?}',
@@ -110,7 +111,11 @@ class Api
 			case 'devices.showing': return array_map(fn($d) => ['id' => $d['id'], 'mac' => $d['mac'], 'name' => $d['name']], $s->devicesShowing((string) $need('extension')));
 			case 'devices.forExtension': return $s->devicesForExtension((string) $need('extension'));
 			case 'assets.list': return $s->listAssets($a['kind'] ?? null);
+			case 'upload.chunk': return $s->uploadChunk((string) $need('id'), (int) ($a['offset'] ?? -1), (string) ($a['_raw'] ?? ''));
 			case 'asset.add':
+				if (isset($a['upload'])) {
+					return $s->addAsset((string) $need('kind'), (string) $need('name'), ['upload' => (string) $a['upload']], $a);
+				}
 				if (isset($files['file']['tmp_name']) && is_uploaded_file($files['file']['tmp_name'])) {
 					return $s->addAsset((string) $need('kind'), (string) ($a['name'] ?? $files['file']['name']), $files['file']['tmp_name'], $a);
 				}

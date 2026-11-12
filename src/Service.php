@@ -965,7 +965,13 @@ class Service
 	public function addAsset(string $kind, string $name, $source, array $meta = []): array
 	{
 		$tmp = null;
-		if (is_array($source) && isset($source['base64'])) {
+		if (is_array($source) && isset($source['upload'])) {
+			$tmp = $this->uploadPath((string) $source['upload']);
+			if (!is_file($tmp)) {
+				throw new \InvalidArgumentException('Upload not found (it may have expired)');
+			}
+			$source = $tmp;
+		} elseif (is_array($source) && isset($source['base64'])) {
 			$tmp = tempnam(sys_get_temp_dir(), 'opa');
 			file_put_contents($tmp, base64_decode((string) $source['base64'], true) ?: '');
 			$source = $tmp;
@@ -977,6 +983,47 @@ class Service
 				@unlink($tmp);
 			}
 		}
+	}
+
+	/**
+	 * Receive one piece of a GUI upload. Pieces arrive in order (offset = bytes
+	 * received so far), which keeps every request under PHP's post_max_size /
+	 * upload_max_filesize (2 MB / 8 MB by default; firmware is ~40 MB).
+	 */
+	public function uploadChunk(string $id, int $offset, string $data): array
+	{
+		$path = $this->uploadPath($id);
+		if ($offset === 0) {
+			foreach (glob(dirname($path) . '/*.part') ?: [] as $old) {
+				if (filemtime($old) < time() - 86400) {
+					@unlink($old); // abandoned uploads
+				}
+			}
+			@unlink($path);
+		}
+		clearstatcache(true, $path);
+		$have = is_file($path) ? filesize($path) : 0;
+		if ($offset !== $have) {
+			throw new \InvalidArgumentException("Upload out of order (expected offset $have, got $offset)");
+		}
+		if ($have + strlen($data) > 1 << 30) {
+			@unlink($path);
+			throw new \InvalidArgumentException('Upload too large (1 GB limit)');
+		}
+		file_put_contents($path, $data, FILE_APPEND | LOCK_EX);
+		return ['received' => $have + strlen($data)];
+	}
+
+	private function uploadPath(string $id): string
+	{
+		if (!preg_match('/^[a-f0-9]{16,64}$/', $id)) {
+			throw new \InvalidArgumentException('Bad upload id');
+		}
+		$dir = rtrim($this->assets->dir(), '/') . '/uploads';
+		if (!is_dir($dir)) {
+			@mkdir($dir, 0750, true);
+		}
+		return "$dir/$id.part";
 	}
 
 	public function deleteAsset(int $id): array

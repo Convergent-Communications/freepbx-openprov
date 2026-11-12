@@ -632,6 +632,20 @@ $tests['audio: mu-law WAV becomes 16-bit PCM'] = function () {
 	ok($samples[2] < -30000 && $samples[3] > 30000, 'extremes');
 };
 
+$tests['assets: chunked upload assembles in order'] = function () {
+	$w = world();
+	$id = str_repeat('ab', 16);
+	$rom = random_bytes(3000);
+	eq(1000, $w->svc->uploadChunk($id, 0, substr($rom, 0, 1000))['received']);
+	throws(fn() => $w->svc->uploadChunk($id, 0 + 500, 'x'), 'out of order');
+	$w->svc->uploadChunk($id, 1000, substr($rom, 1000, 1000));
+	$w->svc->uploadChunk($id, 2000, substr($rom, 2000));
+	$a = $w->svc->addAsset('firmware', 'Yealink-T7X-185.87.0.37.rom', ['upload' => $id], []);
+	eq(hash('sha256', $rom), $a['sha256']);
+	throws(fn() => $w->svc->addAsset('firmware', 'x.rom', ['upload' => $id], []), 'Upload not found');
+	throws(fn() => $w->svc->uploadChunk('../../etc', 0, 'x'), 'Bad upload id');
+};
+
 $tests['service: null template and parent are accepted'] = function () {
 	$w = world();
 	$d = $w->svc->saveDevice(['mac' => MAC, 'model' => 'T87W', 'template' => null]);

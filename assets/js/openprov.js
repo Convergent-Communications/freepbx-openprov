@@ -680,9 +680,27 @@
 		});
 		$('#op-upload').onsubmit = (e) => {
 			e.preventDefault();
-			const fd = new FormData(e.target);
-			fd.append('name', e.target.file.files[0]?.name || 'file');
-			guard(e.target.querySelector('button'), async () => { await api('asset.add', {}, fd); delete cache.models; say('Uploaded'); assets(); });
+			const f = e.target;
+			const file = f.file.files[0];
+			if (!file) return say('Choose a file first.', 'warning');
+			guard(f.querySelector('button'), async () => {
+				// Sent in 1 MB pieces so PHP's upload limits (2 MB by default) don't matter.
+				const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+				const CHUNK = 1024 * 1024;
+				for (let off = 0; off < file.size || off === 0; off += CHUNK) {
+					const res = await fetch(`ajax.php?module=openprov&command=api&action=upload.chunk&id=${id}&offset=${off}`, {
+						method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/octet-stream' }, body: file.slice(off, off + CHUNK),
+					});
+					const body = await res.json().catch(() => ({ status: false, message: 'Unexpected response (' + res.status + ')' }));
+					if (!body.status) throw new Error(body.message || 'Upload failed');
+					if (file.size > CHUNK) say(`Uploading ${file.name}: ${Math.min(100, Math.round(((off + CHUNK) / file.size) * 100))}%`, 'info');
+					if (file.size === 0) break;
+				}
+				await api('asset.add', { kind: f.kind.value, name: file.name, model: f.model.value, upload: id });
+				delete cache.models;
+				say('Uploaded ' + file.name);
+				assets();
+			});
 		};
 		$$('[data-del-asset]').forEach((b) => (b.onclick = () => confirm('Delete this file?') && guard(b, async () => { await api('asset.delete', { id: +b.dataset.delAsset }); delete cache.models; assets(); })));
 	}

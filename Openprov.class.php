@@ -193,16 +193,39 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 	 * Single AJAX entry point: ajax.php?module=openprov&command=api&action=<name>
 	 * with a JSON body {..args..}. Returns {status, data|message}.
 	 */
+	private static function iniBytes(string $v): int
+	{
+		$n = (int) $v;
+		return match (strtolower(substr(trim($v), -1))) {
+			'g' => $n << 30,
+			'm' => $n << 20,
+			'k' => $n << 10,
+			default => $n,
+		};
+	}
+
 	public function ajaxHandler()
 	{
 		$action = (string) ($_REQUEST['action'] ?? '');
 		$args = [];
+		// A request over post_max_size arrives with every field dropped; say so
+		// instead of failing on a "missing" argument.
+		$len = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+		if ($len > 0 && !$_POST && !$_FILES && $len > self::iniBytes((string) ini_get('post_max_size'))) {
+			return ['status' => false, 'message' => 'Upload too large for PHP (' . round($len / 1048576, 1) . ' MB > post_max_size ' . ini_get('post_max_size') . ').'];
+		}
 		$raw = file_get_contents('php://input');
-		if ($raw !== '' && $raw !== false && str_starts_with(trim($raw), '{')) {
+		if ($action === 'upload.chunk') {
+			// Raw bytes of one piece of a file; parameters in the query string.
+			$args = ['id' => (string) ($_GET['id'] ?? ''), 'offset' => (int) ($_GET['offset'] ?? -1), '_raw' => (string) $raw];
+		} elseif ($raw !== '' && $raw !== false && str_starts_with(trim($raw), '{')) {
 			$args = json_decode($raw, true) ?: [];
 		} else {
 			$args = $_POST;
 		}
+		// Server-side paths are for the CLI only: over AJAX they would let a
+		// GUI session publish any file the web server can read.
+		unset($args['path']);
 		try {
 			$data = (new \FreePBX\modules\Openprov\Api($this->service()))->call($action, $args, $_FILES);
 			return ['status' => true, 'data' => $data];

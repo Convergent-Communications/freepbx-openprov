@@ -189,6 +189,16 @@ class Yealink implements Brand
 			$b['openvpn.url'] = $ctx['urls']['vpn'];
 		}
 
+		// Dial-now rules
+		$rules = array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', (string) ($ctx['settings']['dialnow'] ?? '')))));
+		foreach ($rules as $i => $rule) {
+			if ($i >= 100) {
+				break;
+			}
+			$b['dialplan.dialnow.rule.' . ($i + 1)] = $rule;
+			$b['dialplan.dialnow.line_id.' . ($i + 1)] = '0';
+		}
+
 		// Multicast paging (Yealink supports 10 listen addresses)
 		foreach (array_values($ctx['multicast']) as $i => $mc) {
 			if ($i >= 10) {

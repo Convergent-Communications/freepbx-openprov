@@ -1,0 +1,13 @@
+.openprov .op-header h1 { font-size: 1.6rem; margin: .5rem 0 1rem; }
+.openprov .op-main { padding: 1rem 0; }
+.openprov .op-toolbar { margin: .5rem 0 1rem; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.openprov .op-actions { border-top: 1px solid #ddd; padding-top: 1rem; margin-top: 1.5rem; }
+.openprov .op-table td, .openprov .op-table th { vertical-align: middle; }
+.openprov .op-keys tr.op-more { display: none; }
+.openprov .op-keys tr.op-more.op-show { display: table-row; }
+.openprov .op-keys td:first-child { width: 3em; }
+.openprov .op-group { border: 1px solid #e3e3e3; border-radius: 4px; padding: .5rem 1rem 0; margin-bottom: 1rem; }
+.openprov .op-group legend { font-size: 1rem; width: auto; padding: 0 .4rem; margin-bottom: 0; }
+.openprov .op-mono, .openprov .op-pre { font-family: SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.openprov .op-pre { background: #f6f6f6; border: 1px solid #e3e3e3; padding: .75rem; max-height: 32rem; overflow: auto; white-space: pre; }
+.openprov .op-sub { padding-top: 1rem; }

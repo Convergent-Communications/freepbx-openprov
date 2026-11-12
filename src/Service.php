@@ -736,7 +736,23 @@ class Service
 				'extension' => null,
 			];
 		}
+		// Registrations from phones OpenProv already manages (matched by line
+		// extension or last provisioning IP: Wi-Fi models answer ARP with a
+		// different MAC than the one they provision with).
+		$knownExt = [];
+		$knownIp = [];
+		foreach ($this->store->devices() as $d) {
+			foreach ($this->store->lines($d['id']) as $l) {
+				$knownExt[$l['extension']] = true;
+			}
+			if ($d['last_ip'] !== '') {
+				$knownIp[$d['last_ip']] = true;
+			}
+		}
 		foreach ($this->registeredPhones() as $p) {
+			if (isset($knownExt[$p['extension']]) || isset($knownIp[$p['ip']])) {
+				continue;
+			}
 			if ($p['mac'] && ($this->store->deviceByMac($p['mac']) || isset($out[$p['mac']]))) {
 				continue;
 			}

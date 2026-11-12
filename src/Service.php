@@ -130,6 +130,16 @@ class Service
 	{
 		$t = $this->templateRef($ref);
 		$t['keys'] = $this->store->keys('template', $t['id']);
+		// What this template inherits: the parent chain over the built-in
+		// defaults (the editor colours each field as inherited or set here).
+		$pid = $t['parent_id'] ?: null;
+		$ghost = ['id' => 0, 'brand' => $t['brand'], 'template_id' => $pid, 'settings' => []];
+		$t['parent_view'] = [
+			'name' => $pid ? ($this->store->template($pid)['name'] ?? null) : null,
+			'chain' => $pid ? array_map(fn($x) => ['id' => $x['id'], 'name' => $x['name']], $this->builder->templateChain($pid)) : [],
+			'settings' => $this->builder->effectiveSettings($ghost, false),
+			'keys' => $pid ? $this->builder->effectiveKeys($ghost, false) : (object) [],
+		];
 		return $t;
 	}
 

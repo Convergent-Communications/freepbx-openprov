@@ -126,6 +126,14 @@ Templates hold two things:
   computed values that must stay correct: account secrets and provisioning
   credentials.
 
+**In the GUI** every setting and key shows where its value comes from:
+
+- **Grey:** inherited. The field shows the value from the template (for a phone) or from the parent template and defaults (for a template).
+- **Blue,** with a "this phone" / "this template" badge and a × reset: set at this level.
+- **Yellow** key rows: edited but not saved.
+
+The colours follow edits live. The backend supplies `template_view` (devices) and `parent_view` (templates) for this. Colour plus badge, rather than colour alone, keeps it readable for colour-blind users.
+
 ## D6. Phone models are JSON files
 
 Adding a phone is a new `models/yealink/<model>.json`, with no code change. It

@@ -528,6 +528,20 @@ $tests['render: tunnel-bound VPN phones provision through the tunnel'] = functio
 	eq('internal,other', $w->settings->get('firewall_zones'));
 };
 
+$tests['template: parent_view shows what a child template inherits'] = function () {
+	$w = world();
+	$w->svc->saveTemplate(['name' => 'Parent', 'settings' => ['backlight_time' => '60']]);
+	$w->svc->setKeys('template', 'Parent', [['position' => 2, 'type' => 'blf', 'value' => '201']]);
+	$w->svc->saveTemplate(['name' => 'Child', 'parent' => 'Parent']);
+	$c = $w->svc->getTemplate('Child');
+	eq('Parent', $c['parent_view']['name']);
+	eq('60', $c['parent_view']['settings']['backlight_time']);
+	eq('201', $c['parent_view']['keys']['line'][2]['value']);
+	$p = $w->svc->getTemplate('Parent');
+	eq(null, $p['parent_view']['name']);
+	ok(array_key_exists('backlight_time', $p['parent_view']['settings']), 'defaults for a root template');
+};
+
 $tests['service: null template and parent are accepted'] = function () {
 	$w = world();
 	$d = $w->svc->saveDevice(['mac' => MAC, 'model' => 'T87W', 'template' => null]);

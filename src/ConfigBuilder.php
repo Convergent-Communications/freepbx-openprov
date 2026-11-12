@@ -426,6 +426,7 @@ class ConfigBuilder
 			'resync_minutes' => (int) ($s['resync_minutes'] ?? 1440),
 			'manage_keys' => ($s['manage_keys'] ?? '1') === '1',
 			'screenshot_from' => ($s['remote_screenshot'] ?? '1') === '1' ? $this->pbxSourceAddresses() : [],
+			'features' => $this->featureLines($s, $model, $keys, $device, $primaryExt, $this->hostFor($network)),
 			'distinctive' => $distinctive,
 			'distinctive_managed' => trim((string) ($s['distinctive_ring'] ?? '')) !== '',
 			'expansion_used' => (int) ($device['settings']['expansion_modules'] ?? 0) > 0,
@@ -450,6 +451,80 @@ class ConfigBuilder
 			}
 		}
 		return array_values(array_unique($ips));
+	}
+
+	/**
+	 * Add-on feature config (models/<brand>/features/*.json).
+	 * - A feature is managed when its setting is On (1) or Off (0); blank = untouched.
+	 * - Slots are given out over the managed features in a fixed order, so they
+	 *   stay put: softkeys 1, 2, …; hidden line keys counting down from the
+	 *   model's last key, skipping keys the phone actually uses.
+	 * - On writes the feature's lines (+ global switches); Off writes its
+	 *   removal lines at the same slots, because a phone keeps settings that
+	 *   are merely left out of a later config.
+	 * Returns ['lines' => key => value, 'active' => [id => slots], 'warnings' => [..]].
+	 */
+	public function featureLines(array $s, array $model, array $keys, array $device, string $ext, string $pbx): array
+	{
+		$out = ['lines' => [], 'active' => [], 'warnings' => []];
+		$used = [];
+		foreach ($keys['line'] ?? [] as $pos => $k) {
+			if (($k['type'] ?? '') !== '' && $k['type'] !== 'none') {
+				$used[(int) $pos] = true;
+			}
+		}
+		$nextKey = (int) $model['lineKeys'];
+		$nextSoft = 1;
+		$globals = [];
+		foreach ($this->catalog->features($device['brand']) as $id => $f) {
+			$state = (string) ($s["feature.$id"] ?? '');
+			if ($state !== '1' && $state !== '0') {
+				continue;
+			}
+			$missing = array_diff($f['requires'], $model['capabilities'] ?? []);
+			if ($missing) {
+				if ($state === '1') {
+					$out['warnings'][] = ($f['label'] ?? $id) . ": not available on the {$model['id']} (needs " . implode(', ', $missing) . ')';
+				}
+				continue;
+			}
+			$slots = [];
+			for ($i = 0; $i < (int) ($f['claims']['lineKey'] ?? 0); $i++) {
+				while ($nextKey > 0 && isset($used[$nextKey])) {
+					$nextKey--;
+				}
+				if ($nextKey < 1) {
+					$out['warnings'][] = ($f['label'] ?? $id) . ': no free line key left';
+					continue 2;
+				}
+				$slots['lineKey' . ($i ? $i + 1 : '')] = $nextKey;
+				$used[$nextKey] = true;
+			}
+			for ($i = 0; $i < (int) ($f['claims']['softkey'] ?? 0); $i++) {
+				$slots['softkey' . ($i ? $i + 1 : '')] = $nextSoft++;
+			}
+			$common = ['{ext}' => $ext, '{pbx}' => $pbx, '{mac}' => $device['mac'] ?? ''];
+			$vars = [];
+			foreach ($f['variables'] as $v) {
+				$val = (string) ($s["feature.$id.{$v['id']}"] ?? ($v['default'] ?? ''));
+				$vars['{' . $v['id'] . '}'] = strtr($val, $common);
+			}
+			$map = $common + $vars;
+			foreach ($slots as $k => $n) {
+				$map['{' . $k . '}'] = (string) $n;
+			}
+			foreach ($state === '1' ? $f['lines'] : $f['remove'] as $k => $v) {
+				$out['lines'][strtr($k, $map)] = strtr((string) $v, $map);
+			}
+			if ($state === '1') {
+				$globals += $f['globals'];
+				$out['active'][$id] = $slots;
+			}
+		}
+		// Global switches are turned on while any feature needs them, never off
+		// (other things on the phone may rely on them).
+		$out['lines'] = $globals + $out['lines'];
+		return $out;
 	}
 
 	/**

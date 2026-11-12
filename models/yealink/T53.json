@@ -15,6 +15,10 @@
   "wallpaper": null,
   "firmwarePrefix": null,
   "verified": false,
-  "notes": "Key counts from vendor data; not yet verified on hardware.",
-  "defaults": {}
+  "notes": "Key counts from vendor data; not yet verified on hardware. Capabilities edk/xml_browser assumed from the T5x feature set, not yet verified on hardware.",
+  "defaults": {},
+  "capabilities": [
+    "edk",
+    "xml_browser"
+  ]
 }

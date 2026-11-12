@@ -306,11 +306,13 @@ class Service
 		try {
 			$render = $this->builder->render($d);
 			$out['in_sync'] = $d['last_hash'] === '' ? null : $render['hash'] === $d['last_hash'];
+			$out['warnings'] = $render['context']['features']['warnings'];
 			$out['effective'] = [
 				'settings' => $render['context']['settings'],
 				'keys' => $render['context']['keys'],
 				'network' => $render['context']['network'],
 				'vpn_client' => $render['context']['vpn_client'],
+				'features' => $render['context']['features']['active'],
 				'accounts' => array_map(fn($a) => array_diff_key($a, ['secret' => 1]), $render['context']['accounts']),
 			];
 			$tctx = $this->builder->context($d, true);

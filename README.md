@@ -44,6 +44,7 @@ fwconsole ma install openprov        # as root: also installs the HTTPS vhost (p
 - [EPM feature parity](docs/EPM-PARITY.md)
 - [Testing and hardware results](docs/TESTING.md)
 - [Adding phone models and settings](docs/ADDING-MODELS.md)
+- [Add-on features (e.g. captions softkey)](docs/FEATURES.md)
 - [Yealink VPN provisioning issue](docs/YEALINK-VPN-ISSUE.md)
 
 ## Development

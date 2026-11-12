@@ -701,6 +701,47 @@ $tests['keys: overrides that match the template are dropped, so the phone follow
 	eq([], $w->store->keys('template', $w->svc->getTemplate('Kid')['id']));
 };
 
+$tests['features: captions on/off/unmanaged, slots, globals, models'] = function () {
+	$w = world();
+	ok(isset($w->catalog->features('yealink')['captions']), 'captions feature loaded');
+	phone($w);
+	$cfg = fn() => kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+	ok(!isset($cfg()['softkey.1.enable']), 'blank = not managed: nothing written');
+	$w->settings->set('internal_host', '192.0.2.1');
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['feature.captions' => '1']]);
+	$c = $cfg();
+	eq('1', $c['features.enhanced_dss_keys.enable']);
+	eq('27', $c['linekey.84.type'], 'hidden key = the T87W\'s last key');
+	eq('http://192.0.2.1:18990/captions/212', $c['linekey.84.value']);
+	eq('Captions', $c['softkey.1.label']);
+	eq('$KLineKey84$', $c['softkey.1.action']);
+	eq('1', $c['softkey.1.use.on_talk']);
+	eq(['captions' => ['lineKey' => 84, 'softkey' => 1]], $w->svc->getDevice(MAC)['effective']['features']);
+	// a real key on 84 pushes the hidden key down to 83
+	$w->svc->setKeys('device', MAC, [['position' => 84, 'type' => 'speeddial', 'value' => '100']]);
+	$c = $cfg();
+	eq('13', $c['linekey.84.type']);
+	eq('27', $c['linekey.83.type']);
+	eq('$KLineKey83$', $c['softkey.1.action']);
+	// custom url / label with {ext}
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['feature.captions' => '1', 'feature.captions.url' => 'http://agent:9/c/{ext}?k=t', 'feature.captions.label' => 'CC']]);
+	$c = $cfg();
+	eq('http://agent:9/c/212?k=t', $c['linekey.83.value']);
+	eq('CC', $c['softkey.1.label']);
+	// Off writes the removal values at the same slots, and leaves the global switch alone
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['feature.captions' => '0']]);
+	$c = $cfg();
+	eq('0', $c['softkey.1.enable']);
+	eq('0', $c['linekey.83.type']);
+	eq('%NULL%', $c['linekey.83.value']);
+	ok(!isset($c['features.enhanced_dss_keys.enable']), 'global switch never turned off');
+	// a model without the capabilities: warning, nothing written
+	$w->svc->saveDevice(['mac' => '00:15:65:00:00:02', 'model' => 'T46S', 'lines' => [['account' => 1, 'extension' => '201']], 'settings' => ['feature.captions' => '1']]);
+	$d = $w->svc->getDevice('001565000002');
+	ok(str_contains(implode(' ', $d['warnings']), 'not available on the T46S'));
+	ok(!isset(kv($w->builder->render($w->store->deviceByMac('001565000002'))['text'])['softkey.1.enable']));
+};
+
 $tests['service: null template and parent are accepted'] = function () {
 	$w = world();
 	$d = $w->svc->saveDevice(['mac' => MAC, 'model' => 'T87W', 'template' => null]);

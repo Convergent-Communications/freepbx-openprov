@@ -237,6 +237,12 @@ class Yealink implements Brand
 			$b["multicast.listen_address.$n.label"] = $mc['label'];
 		}
 
+		// Add-on features last, so their hidden line key wins over "clear
+		// line keys not defined here".
+		foreach ($ctx['features']['lines'] ?? [] as $k => $v) {
+			$b[$k] = $v;
+		}
+
 		return ['base' => $b, 'protected' => $p];
 	}
 

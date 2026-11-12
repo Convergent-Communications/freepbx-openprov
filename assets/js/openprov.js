@@ -620,6 +620,8 @@
 				<div class="small mt-1">Overrides on this phone: <b>${nKeys}</b> key(s) · <b>${nSettings}</b> setting(s) · <b>${nRaw}</b> raw key(s). Everything else follows the template.</div>
 			</div>` : ''}
 			${d.render_error ? `<div class="alert alert-danger">${esc(d.render_error)}</div>` : ''}
+			${(d.warnings || []).length ? `<div class="alert alert-warning">${d.warnings.map(esc).join('<br>')}</div>` : ''}
+			${id && d.effective && d.effective.features && Object.keys(d.effective.features).length ? `<div class="small text-muted mb-2">Add-on features: ${Object.entries(d.effective.features).map(([f, sl]) => `<b>${esc(f)}</b> (${Object.entries(sl).map(([k, n]) => (k.startsWith('softkey') ? 'softkey ' : 'hidden key ') + n).join(', ')})`).join(' · ')}</div>` : ''}
 			${id ? '<div id="op-sync" class="op-sync"></div>' : ''}
 			<div class="form-row">
 				<div class="form-group col-md-3"><label>MAC address</label><input class="form-control" id="op-mac" value="${esc(d.mac_pretty || d.mac)}" placeholder="c4:fc:22:1d:d6:37"></div>

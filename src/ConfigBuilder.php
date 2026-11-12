@@ -89,6 +89,28 @@ class ConfigBuilder
 		return $includeDevice ? array_merge($s, array_map('strval', $device['settings'])) : $s;
 	}
 
+	/**
+	 * Where each inherited setting comes from, for a template chain:
+	 * id => template name (last one in the chain that sets it), 'default'
+	 * (OpenProv's built-in default, which is sent to the phone) or '' (nothing
+	 * set anywhere: OpenProv sends nothing and the phone keeps its own value).
+	 */
+	public function settingSources(string $brand, ?int $templateId): array
+	{
+		$src = [];
+		foreach ($this->catalog->schemaDefaults($brand) as $id => $v) {
+			$src[$id] = (string) $v !== '' ? 'default' : '';
+		}
+		foreach ($this->templateChain($templateId) as $t) {
+			foreach ($t['settings'] as $id => $v) {
+				if ((string) $v !== '') {
+					$src[$id] = $t['name'];
+				}
+			}
+		}
+		return $src;
+	}
+
 	/** Raw keys: template chain then device. */
 	public function effectiveRaw(array $device): array
 	{

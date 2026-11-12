@@ -132,6 +132,14 @@ Templates hold two things:
 - **Blue,** with a "this phone" / "this template" badge and a × reset: set at this level.
 - **Yellow** key rows: edited but not saved.
 
+The inherited entry names its source:
+
+- **"(from Base)":** a template sets it.
+- **"(default)":** OpenProv's built-in value. It is sent to the phone.
+- **"Phone decides (not managed)":** nothing sets it, so OpenProv sends no key and the phone keeps its own value. That may be the factory default or a change made on the phone. This applies only to plain settings; a blank computed setting has its own meaning, given in its label.
+
+Yealink's factory values are not shown. They vary by model and firmware, and OpenProv can't know them reliably.
+
 The colours follow edits live. The backend supplies `template_view` (devices) and `parent_view` (templates) for this. Colour plus badge, rather than colour alone, keeps it readable for colour-blind users.
 
 ## D6. Phone models are JSON files

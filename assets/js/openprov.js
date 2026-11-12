@@ -142,16 +142,25 @@
 	 * coloured: grey = inherited (shows the inherited value), blue = set here.
 	 * `scope` is 'phone' or 'template'; `source` names where inherited values come from.
 	 */
-	function settingsForm(values, inherited, scope, source) {
+	function settingsForm(values, inherited, scope, source, sources = {}) {
 		const groups = {};
 		cache.schema.forEach((s) => (groups[s.group] = groups[s.group] || []).push(s));
 		const field = (s) => {
 			const v = values[s.id] ?? '';
 			const inh = inherited ? inherited[s.id] : s.default;
 			const shown = displayValue(s, inh);
-			const ph = shown !== '' ? shown : 'not set';
-			// In a dropdown the inherited entry sits beside the real choices, so mark it.
-			const inhOpt = shown !== '' ? `${shown} (inherited)` : 'not set (inherited)';
+			// Where the inherited value comes from: a template, OpenProv's default
+			// (sent to the phone), or nowhere (the phone keeps its own value).
+			const src = sources[s.id] ?? (shown !== '' ? 'default' : '');
+			const blank = shown === '' || src === '';
+			// Blank on a computed setting has its own meaning (PBX time zone, PBX
+			// address, global password, no wallpaper…); only plain settings go unmanaged.
+			const unmanaged = blank && !s.computed;
+			const from = src === 'default' ? 'default' : `from ${src}`;
+			const ph = unmanaged ? 'phone decides (not managed)' : (blank ? 'not set' : shown);
+			// In a dropdown the inherited entry sits beside the real choices, so name its source.
+			const inhOpt = unmanaged ? 'Phone decides (not managed)' : (blank ? 'Not set (inherited)' : `${shown} (${from})`);
+			const tip = blank && s.computed ? (s.help || 'Not set: OpenProv works this value out (see the label).') : unmanaged ? 'Nothing set here or above: OpenProv sends nothing and the phone keeps its own value (factory default or whatever was set on the phone).' : `Inherited: ${shown} (${from})`;
 			const name = `data-setting="${esc(s.id)}"`;
 			let input;
 			const opt = (val, label, sel) => `<option value="${esc(val)}" ${sel ? 'selected' : ''}>${esc(label)}</option>`;
@@ -166,7 +175,7 @@
 			} else {
 				input = `<input class="form-control form-control-sm" type="${s.type === 'password' ? 'password' : 'text'}" ${name} value="${esc(v)}" placeholder="${esc(ph)}" autocomplete="off">`;
 			}
-			return `<div class="form-group col-md-4 op-field ${v !== '' ? 'op-set' : 'op-inh'}">
+			return `<div class="form-group col-md-4 op-field ${v !== '' ? 'op-set' : 'op-inh'}" title="${esc(tip)}">
 				<label class="small mb-0" title="${esc(s.help || '')}">${esc(s.label)}${s.help ? ' <i class="fa fa-question-circle text-muted"></i>' : ''}
 					<span class="badge op-badge">this ${scope}</span>
 					<a href="#" class="op-reset" title="Remove this ${scope}'s value and inherit again">&times; reset</a></label>${input}</div>`;
@@ -175,7 +184,7 @@
 		const legend = `<div class="op-legend small">
 			<span><span class="op-swatch op-swatch-set"></span> Set on this ${scope}</span>
 			<span><span class="op-swatch op-swatch-inh"></span> Inherited from ${esc(source)}</span>
-			<span class="text-muted">Clear a field or use &times; reset to inherit again.</span></div>`;
+			<span class="text-muted">"(default)" = OpenProv's built-in value, sent to the phone. "Phone decides" = not managed: the phone keeps its own value. Clear a field or use &times; reset to inherit again.</span></div>`;
 		return `<datalist id="op-tz">${tz.map((z) => `<option value="${z}">`).join('')}</datalist>` + legend +
 			Object.entries(groups).map(([g, list]) => `<fieldset class="op-group"><legend>${esc(g)}</legend><div class="form-row">${list.map(field).join('')}</div></fieldset>`).join('');
 	}
@@ -381,7 +390,7 @@
 			<div class="op-sub" data-pane="keys">${keysEditor(model.lineKeys || 0, d.keys, tv.keys, true)}
 				${model.expansion ? `<div class="form-inline mb-2"><label class="mr-2">Expansion modules attached</label><select class="form-control form-control-sm" data-setting="expansion_modules">${[0, 1, 2, 3, 4, 5, 6].slice(0, model.expansion.modules + 1).map((n) => `<option value="${n}" ${String(d.settings.expansion_modules || 0) === String(n) ? 'selected' : ''}>${n}</option>`).join('')}</select></div>` : ''}
 				${model.expansion ? Array.from({ length: model.expansion.modules }, (_, i) => `<details class="mb-2" ${d.keys.some((k) => k.bank === 'exp' + (i + 1)) ? 'open' : ''}><summary>Expansion module ${i + 1} (${model.expansion.keysPerModule} keys)</summary>${bankTable(model.expansion.keysPerModule, d.keys, tv.keys, true, 'exp' + (i + 1))}</details>`).join('') : ''}</div>
-			<div class="op-sub d-none" data-pane="settings">${settingsForm(d.settings, tv.settings, 'phone', tv.name ? 'template ' + tv.name : 'defaults')}</div>
+			<div class="op-sub d-none" data-pane="settings">${settingsForm(d.settings, tv.settings, 'phone', tv.name ? 'template ' + tv.name : 'defaults', tv.sources)}</div>
 			<div class="op-sub d-none" data-pane="raw"><p class="small text-muted">One <code>key = value</code> per line, written last (after templates). Use for anything the settings don't cover. <code>%NULL%</code> clears a value on the phone.</p><textarea class="form-control op-mono" rows="12" id="op-raw">${esc(rawText(d.raw))}</textarea></div>
 			<div class="op-sub d-none" data-pane="config"><pre class="op-pre" id="op-config">Loading…</pre></div>
 			<div class="op-sub d-none" data-pane="activity"><div id="op-dev-events">Loading…</div></div>
@@ -502,7 +511,7 @@
 			</ul>
 			${pv.name ? `<div class="alert alert-secondary op-tplbox">Inherits from <b>${pv.chain.map((x) => esc(x.name)).join(' → ')}</b> <a href="#" id="op-goto-parent" class="ml-2">Edit parent &rarr;</a>
 				<div class="small mt-1">Set on this template: <b>${t.keys.filter((k) => k.type !== '').length}</b> key(s) · <b>${Object.keys(t.settings || {}).length}</b> setting(s). Everything else comes from the parent.</div></div>` : ''}
-			<div class="op-sub" data-pane="settings">${settingsForm(t.settings, pv.settings, 'template', pv.name ? 'parent ' + pv.name : 'defaults')}</div>
+			<div class="op-sub" data-pane="settings">${settingsForm(t.settings, pv.settings, 'template', pv.name ? 'parent ' + pv.name : 'defaults', pv.sources)}</div>
 			<div class="op-sub d-none" data-pane="keys"><p class="small text-muted">Keys beyond a model's key count are ignored for that model (T87W: 84).</p>${keysEditor(maxKeys, t.keys, pv.name ? pv.keys : null, false)}</div>
 			<div class="op-sub d-none" data-pane="raw"><textarea class="form-control op-mono" rows="14" id="op-raw">${esc(rawText(t.raw))}</textarea></div>
 			<div class="op-toolbar op-actions">

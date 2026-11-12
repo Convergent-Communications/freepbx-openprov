@@ -138,6 +138,7 @@ class Service
 			'name' => $pid ? ($this->store->template($pid)['name'] ?? null) : null,
 			'chain' => $pid ? array_map(fn($x) => ['id' => $x['id'], 'name' => $x['name']], $this->builder->templateChain($pid)) : [],
 			'settings' => $this->builder->effectiveSettings($ghost, false),
+			'sources' => $this->builder->settingSources($t['brand'], $pid),
 			'keys' => $pid ? $this->builder->effectiveKeys($ghost, false) : (object) [],
 		];
 		return $t;
@@ -297,6 +298,7 @@ class Service
 				'name' => $d['template_id'] ? ($this->store->template($d['template_id'])['name'] ?? null) : null,
 				'chain' => array_map(fn($t) => ['id' => $t['id'], 'name' => $t['name']], $this->builder->templateChain($d['template_id'])),
 				'settings' => $tctx['settings'],
+				'sources' => $this->builder->settingSources($d['brand'], $d['template_id'] ?: null),
 				'keys' => $tctx['keys'],
 			];
 		} catch (\Throwable $e) {

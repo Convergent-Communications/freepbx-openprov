@@ -540,6 +540,9 @@ $tests['template: parent_view shows what a child template inherits'] = function 
 	$p = $w->svc->getTemplate('Parent');
 	eq(null, $p['parent_view']['name']);
 	ok(array_key_exists('backlight_time', $p['parent_view']['settings']), 'defaults for a root template');
+	eq('Parent', $c['parent_view']['sources']['backlight_time'], 'set by the parent');
+	eq('default', $c['parent_view']['sources']['vpn'], 'built-in default');
+	eq('', $p['parent_view']['sources']['backlight_time'], 'nothing set: not managed');
 };
 
 $tests['render: screenshots allowed from the PBX addresses only'] = function () {

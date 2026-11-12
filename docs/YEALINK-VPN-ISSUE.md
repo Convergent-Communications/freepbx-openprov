@@ -29,6 +29,24 @@ The T57W (96.87.0.20), with the same VPN server and endpoint, provisions from `1
 
 **Why this matters.** Remote phones normally provision from the PBX's public hostname, and that is usually the same public IP as the VPN endpoint. On 185.87.x such phones can't be re-provisioned at all while their VPN is up. And because provisioning is forced into the tunnel, a provisioning server that isn't the VPN server is only reachable if the VPN server forwards the traffic onward.
 
+## Phone log (level 6) — the provisioning service binds to tun0
+
+From the phone's local log during Auto Provision Now with the provisioning server at the VPN endpoint address:
+
+```
+ATP: DURL<6> [DCMN]download to file...
+ATP: DURL<6> [DCMN]durl use network interface tun0.
+ATP: DURL<3> [DCMN]No request was made to a valid IP.          (20 s later)
+ATP: DURL<3> [DCMN]download common error, errcode:28, no out.  (curl 28 = timeout)
+ATP: ATP <3> http to file failed, code = -128, msg = , retry = 2
+ATP: ATP <6> Wait 5 second to next file transfer!
+...  retry 3 ...
+ATP: ATP <4> Download mac.boot fail
+ATP: ATP <6> Upgrade from default.boot      -> same cycle again
+```
+
+The provisioning downloader (ATP/DURL) explicitly binds to `tun0` while the VPN is up. That explains why requests to non-tunnel addresses arrive through the tunnel, and why a request to the VPN endpoint's own address never leaves the phone. The "stuck" state is the retry chain: about 75 s per file (3 attempts × 20 s timeout plus 5 s waits) across the boot, common and MAC files.
+
 ## Environment
 
 - **Provisioning server:** FreePBX 17, HTTP on port 84 (Basic auth) and HTTPS on 8443 (Basic auth).

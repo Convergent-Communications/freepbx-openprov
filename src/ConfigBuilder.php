@@ -421,7 +421,7 @@ class ConfigBuilder
 			'vpn_client' => $vpnClient,
 			'prov' => $creds,
 			'passwords' => [
-				'admin' => (string) (($s['admin_password'] ?? '') !== '' ? $s['admin_password'] : $this->settings->get('admin_password')),
+				'admin' => $this->adminPassword($s, $device),
 				'user' => (string) (($s['user_password'] ?? '') !== '' ? $s['user_password'] : $this->settings->get('user_password')),
 			],
 			'timezone' => $this->yealinkTimezone((string) ($s['timezone'] ?? '')),
@@ -536,6 +536,27 @@ class ConfigBuilder
 		// (other things on the phone may rely on them).
 		$out['lines'] = $globals + $out['lines'];
 		return $out;
+	}
+
+	/**
+	 * The phone's admin password: a template/phone admin_password, else (with
+	 * per_device_admin_password) a 10-digit password derived from
+	 * device_secret and the MAC (stable, never stored), else the global one.
+	 */
+	public function adminPassword(array $s, array $device): string
+	{
+		if (($s['admin_password'] ?? '') !== '') {
+			return (string) $s['admin_password'];
+		}
+		if ($this->settings->get('per_device_admin_password') && (string) $this->settings->get('device_secret') !== '' && ($device['mac'] ?? '') !== '') {
+			$h = hash_hmac('sha256', 'admin:' . $device['mac'], (string) $this->settings->get('device_secret'));
+			$digits = '';
+			foreach (str_split($h, 4) as $chunk) {
+				$digits .= (string) (hexdec($chunk) % 10);
+			}
+			return substr($digits, 0, 10);
+		}
+		return (string) $this->settings->get('admin_password');
 	}
 
 	/**

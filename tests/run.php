@@ -848,6 +848,25 @@ $tests['labels: names from the extension or from User Management'] = function ()
 	eq('Alicia Smythe', $cfg()['linekey.2.label'], 'no display name: first + last');
 };
 
+$tests['admin password: shared by default, per-device when enabled, overrides win'] = function () {
+	$w = world();
+	$w->settings->set('device_secret', 'test-secret');
+	phone($w);
+	$pw = fn($mac = MAC) => kv($w->builder->render($w->store->deviceByMac($mac))['text'])['static.security.user_password'][0] ?? '';
+	eq('admin:24681357', $pw(), 'shared by default');
+	$w->settings->set('per_device_admin_password', true);
+	$a = $pw();
+	ok(preg_match('/^admin:\d{10}$/', $a) && $a !== 'admin:24681357', "per-device: $a");
+	eq($a, $pw(), 'stable');
+	$w->svc->saveDevice(['mac' => '80:5e:c0:d6:7c:5f', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '201']]]);
+	ok($pw('805ec0d67c5f') !== $a, 'different per phone');
+	eq(substr($a, 6), $w->svc->getDevice(MAC, true)['admin_password'], 'shown on the phone page (reveal)');
+	eq('********', $w->svc->getDevice(MAC)['admin_password']);
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['admin_password' => '13572468']]);
+	eq('admin:13572468', $pw(), 'phone override wins');
+	eq('********', $w->svc->getSettings(true)['device_secret'], 'secret never revealed');
+};
+
 $tests['service: null template and parent are accepted'] = function () {
 	$w = world();
 	$d = $w->svc->saveDevice(['mac' => MAC, 'model' => 'T87W', 'template' => null]);

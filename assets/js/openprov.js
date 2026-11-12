@@ -657,9 +657,11 @@
 				<button class="btn btn-default" id="op-rearm" title="Allow the shared bootstrap credential again (after a factory reset)">Re-arm (factory reset)</button>
 				<button class="btn btn-danger float-right" id="op-delete">Delete</button>` : ''}
 			</div>
+			${id ? `<p class="small text-muted">Phone web login: <code>admin</code> / <span id="op-adminpw">${esc(d.admin_password)}</span> <a href="#" id="op-adminpw-show">show</a> (${esc(d.admin_password_source)} password)</p>` : ''}
 			${id ? `<p class="small text-muted">Provisioning user <code>${esc(d.prov_user)}</code> · firmware ${esc(d.last_fw || 'unknown')} · last fetch ${ago(d.last_seen)} from ${esc(d.last_ip || '—')}${d.claimable ? ' · <b>accepts the bootstrap credential</b>' : ''}</p>` : ''}`;
 
 		$('#op-back').onclick = (e) => { e.preventDefault(); devices(); };
+		if ($('#op-adminpw-show')) $('#op-adminpw-show').onclick = (e) => { e.preventDefault(); guard(null, async () => { const r = await api('device.get', { device: id, reveal: true }); $('#op-adminpw').textContent = r.admin_password; e.target.remove(); }); };
 		if ($('#op-shot')) $('#op-shot').onclick = (e) => guard(e.target, async () => {
 			$('#op-shot-info').textContent = 'Capturing…';
 			try {
@@ -1006,6 +1008,8 @@
 		vpn_external_remote: '"host port" added after the LAN address in VPN profiles, for off-site phones.',
 		default_template_id: 'Template for new phones.',
 		vpn_update_method: 'Phones with the VPN on. auto / notify = check-sync (works for every model now that tunnel-bound phones provision through the tunnel); reboot = reboot VPN phones through their web API; none = changes apply at the next reboot.',
+		per_device_admin_password: 'Give every phone its own random 10-digit web admin password (derived from the MAC and a secret on this PBX; shown on each phone\'s page) instead of the shared one. A template or phone admin password still wins. Turning it on changes each phone\'s password at its next update.',
+		device_secret: 'Secret that per-device admin passwords are derived from. Never shown; changing it (CLI) changes every per-device password.',
 		vpn_provisioning_host: 'Address VPN phones on tunnel-bound models (T87W on 185.87.x) provision from once their tunnel is up. Blank = the VPN server\'s tunnel address (e.g. 10.8.0.1). Never the VPN endpoint address: those phones can\'t reach it while connected.',
 		firewall_zones: 'FreePBX firewall zones the provisioning port is opened in (custom service "OpenProv provisioning"). VPN phones arrive in the zone of tun0 (Internal by default). Comma-separated: trusted, internal, other, external.',
 		reboot_only_when_idle: 'Never reboot a phone that is on a call.',

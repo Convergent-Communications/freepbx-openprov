@@ -23,6 +23,11 @@ class Settings
 		'auto_adopt' => false,          // create unknown phones on first bootstrap contact
 		'auto_adopt_template' => 0,
 		'admin_password' => '',         // generated on install
+		// Give every phone its own random admin password (derived from
+		// device_secret and the MAC) instead of the shared admin_password.
+		// A template or phone admin_password still wins.
+		'per_device_admin_password' => false,
+		'device_secret' => '',          // generated; changing it changes every per-device password
 		'user_password' => '',
 		'auto_resync' => true,          // update phones when OpenProv settings change (save)
 		'resync_on_apply_config' => true, // ...and after FreePBX Apply Config (e.g. a user renamed)
@@ -146,6 +151,9 @@ class Settings
 		}
 		if ($this->get('bootstrap_pass') === '') {
 			$this->set('bootstrap_pass', Util::secret(18));
+		}
+		if ($this->get('device_secret') === '') {
+			$this->set('device_secret', Util::secret(32));
 		}
 		if ($this->get('admin_password') === '') {
 			$this->set('admin_password', Util::digits(10));

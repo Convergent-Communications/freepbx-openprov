@@ -44,6 +44,7 @@ class Service
 	public function getSettings(bool $reveal = false): array
 	{
 		$s = $this->settings->all();
+		$s['device_secret'] = $s['device_secret'] === '' ? '' : '********'; // never shown, even with reveal
 		if (!$reveal) {
 			foreach (['bootstrap_pass', 'admin_password', 'user_password'] as $k) {
 				$s[$k] = $s[$k] === '' ? '' : '********';
@@ -234,8 +235,16 @@ class Service
 		$d['model_name'] = $model['name'] ?? $d['model'];
 		$d['line_keys'] = (int) ($model['lineKeys'] ?? 0);
 		$d['in_sync'] = $d['last_hash'] !== '' ? null : false;
+		// The phone's web admin password (shared, per-device or overridden).
+		try {
+			$d['admin_password'] = $this->builder->adminPassword($this->builder->effectiveSettings($d), $d);
+		} catch (\Throwable $e) {
+			$d['admin_password'] = '';
+		}
+		$d['admin_password_source'] = ($d['settings']['admin_password'] ?? '') !== '' ? 'phone' : (($this->settings->get('per_device_admin_password')) ? 'per-device' : 'shared');
 		if (!$reveal) {
 			$d['prov_pass'] = $d['prov_pass'] === '' ? '' : '********';
+			$d['admin_password'] = $d['admin_password'] === '' ? '' : '********';
 		}
 		return $d;
 	}

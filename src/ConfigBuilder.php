@@ -80,13 +80,13 @@ class ConfigBuilder
 	}
 
 	/** Friendly settings: schema defaults < template chain < device. */
-	public function effectiveSettings(array $device): array
+	public function effectiveSettings(array $device, bool $includeDevice = true): array
 	{
 		$s = $this->catalog->schemaDefaults($device['brand']);
 		foreach ($this->templateChain($device['template_id']) as $t) {
 			$s = array_merge($s, array_map('strval', $t['settings']));
 		}
-		return array_merge($s, array_map('strval', $device['settings']));
+		return $includeDevice ? array_merge($s, array_map('strval', $device['settings'])) : $s;
 	}
 
 	/** Raw keys: template chain then device. */
@@ -103,11 +103,13 @@ class ConfigBuilder
 	 * Effective keys per bank and position: template chain < device. A device
 	 * key of type 'inherit' is skipped; 'none' blanks a template key.
 	 */
-	public function effectiveKeys(array $device): array
+	public function effectiveKeys(array $device, bool $includeDevice = true): array
 	{
 		$banks = [];
 		$layers = array_map(fn($t) => $this->store->keys('template', $t['id']), $this->templateChain($device['template_id']));
-		$layers[] = $this->store->keys('device', $device['id']);
+		if ($includeDevice) {
+			$layers[] = $this->store->keys('device', $device['id']);
+		}
 		foreach ($layers as $keys) {
 			foreach ($keys as $k) {
 				if ($k['type'] === 'inherit') {
@@ -196,13 +198,18 @@ class ConfigBuilder
 	}
 
 	/** Build the brand-neutral context for a device. */
-	public function context(array $device): array
+	/**
+	 * $templateOnly: what the phone would get from its template chain alone
+	 * (no device settings or keys) — used to show "template value vs this
+	 * phone" in editors.
+	 */
+	public function context(array $device, bool $templateOnly = false): array
 	{
 		$model = $this->catalog->model($device['brand'], $device['model']);
 		if (!$model) {
 			throw new \RuntimeException("Unknown model {$device['brand']}/{$device['model']}");
 		}
-		$s = $this->effectiveSettings($device);
+		$s = $this->effectiveSettings($device, !$templateOnly);
 		$lines = $this->store->lines($device['id']);
 		$vpnClient = $this->vpnClient($device, $s, $lines);
 		$network = $s['prov_network'] ?? 'internal';
@@ -263,7 +270,7 @@ class ConfigBuilder
 			$accountLabels[$a['account']] = $a['label'];
 		}
 		$keys = [];
-		foreach ($this->effectiveKeys($device) as $bank => $slots) {
+		foreach ($this->effectiveKeys($device, !$templateOnly) as $bank => $slots) {
 			foreach ($slots as $pos => $k) {
 				$value = str_replace('{ext}', $primaryExt, (string) $k['value']);
 				$label = (string) $k['label'];

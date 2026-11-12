@@ -148,7 +148,7 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 	{
 		try {
 			$p = $this->parts();
-			if ($p['settings']->get('auto_resync')) {
+			if ($p['settings']->get('resync_on_apply_config')) {
 				$this->service()->syncChanged();
 			}
 			$days = (int) $p['settings']->get('event_retention_days');

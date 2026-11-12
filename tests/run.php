@@ -473,6 +473,32 @@ $tests['phone client: RSA key encoding round-trips through OpenSSL'] = function 
 	eq('Admin123', $plain);
 };
 
+$tests['render: template-only view and per-model VPN update method'] = function () {
+	$w = world();
+	phone($w, ['keys' => [['position' => 3, 'type' => 'blf', 'value' => '202', 'label' => 'Override']]]);
+	$w->svc->setKeys('template', 'Base', [['position' => 1, 'type' => 'line', 'account' => 1], ['position' => 3, 'type' => 'blf', 'value' => '201']]);
+	$d = $w->svc->getDevice(MAC);
+	eq('Alice', $d['template_view']['keys']['line'][3]['label'], 'template column shows the template key');
+	eq('Override', $d['effective']['keys']['line'][3]['label'], 'phone gets its override');
+	eq('Base', $d['template_view']['name']);
+	// auto: T87W (quirk) is rebooted, so with method "auto" and no reachable phone it reports a reboot attempt; T57W gets check-sync.
+	$w->settings->set('vpn_update_method', 'auto');
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['vpn' => 'auto']]);
+	eq('phone-api-reboot', $w->svc->resync([MAC])[0]['method']);
+	$w->svc->saveDevice(['mac' => '80:5e:c0:d6:7c:5f', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '201']], 'settings' => ['vpn' => '6']]);
+	eq('notify', $w->svc->resync(['805ec0d67c5f'])[0]['method']);
+	eq(true, $w->settings->get('resync_on_apply_config'));
+	throws(fn() => $w->settings->set('vpn_update_method', 'sometimes'), 'vpn_update_method');
+};
+
+$tests['service: null template and parent are accepted'] = function () {
+	$w = world();
+	$d = $w->svc->saveDevice(['mac' => MAC, 'model' => 'T87W', 'template' => null]);
+	eq(null, $d['template_id']);
+	$t = $w->svc->saveTemplate(['name' => 'Solo', 'parent' => null]);
+	eq(null, $t['parent_id']);
+};
+
 // ---- runner --------------------------------------------------------------------
 
 $filter = $argv[1] ?? '';

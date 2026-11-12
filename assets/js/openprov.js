@@ -72,11 +72,14 @@
 
 	// ---- tabs ----------------------------------------------------------------
 	const tabs = { devices, templates, assets, discover, events, settings };
+	function selectTab(name) {
+		$$('[data-tab]', app).forEach((n) => n.classList.toggle('active', n.dataset.tab === name));
+	}
 	app.addEventListener('click', (e) => {
 		const a = e.target.closest('[data-tab]');
 		if (!a) return;
 		e.preventDefault();
-		$$('.nav-link', app).forEach((n) => n.classList.toggle('active', n === a));
+		selectTab(a.dataset.tab);
 		flash.innerHTML = '';
 		tabs[a.dataset.tab]().catch(fail);
 	});
@@ -158,12 +161,13 @@
 			} else {
 				input = `<input class="form-control form-control-sm" type="${s.type === 'password' ? 'password' : 'text'}" ${name} value="${esc(v)}" placeholder="${esc(ph)}" autocomplete="off">`;
 			}
-			return `<div class="form-group col-md-4"><label class="small mb-0" title="${esc(s.help || '')}">${esc(s.label)}${s.help ? ' <i class="fa fa-question-circle text-muted"></i>' : ''}</label>${input}</div>`;
+			const overridden = isDevice && v !== '';
+			return `<div class="form-group col-md-4 ${overridden ? 'op-overridden' : ''}"><label class="small mb-0" title="${esc(s.help || '')}">${esc(s.label)}${s.help ? ' <i class="fa fa-question-circle text-muted"></i>' : ''}${overridden ? ' <span class="badge badge-info">this phone</span>' : ''}</label>${input}</div>`;
 		};
 		const tz = ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu', 'America/Toronto', 'America/Halifax', 'Europe/London', 'UTC'];
 		return `<datalist id="op-tz">${tz.map((z) => `<option value="${z}">`).join('')}</datalist>` +
 			Object.entries(groups).map(([g, list]) => `<fieldset class="op-group"><legend>${esc(g)}</legend><div class="form-row">${list.map(field).join('')}</div></fieldset>`).join('') +
-			(isDevice ? '<p class="small text-muted">Blank fields inherit from the template.</p>' : '<p class="small text-muted">Blank fields inherit from the parent template, then the built-in defaults.</p>');
+			(isDevice ? '<p class="small text-muted">Blank fields use the template value shown in grey. Fields marked <span class="badge badge-info">this phone</span> override it.</p>' : '<p class="small text-muted">Blank fields inherit from the parent template, then the built-in defaults.</p>');
 	}
 	const readSettings = () => {
 		const out = {};
@@ -173,7 +177,7 @@
 
 	function keyTypeOptions(selected, isDevice) {
 		const opts = [];
-		opts.push(`<option value="" ${selected === '' ? 'selected' : ''}>${isDevice ? '(template)' : '(unused)'}</option>`);
+		opts.push(`<option value="" ${selected === '' ? 'selected' : ''}>${isDevice ? 'Use template' : '(unused)'}</option>`);
 		if (isDevice) opts.push(`<option value="none" ${selected === 'none' ? 'selected' : ''}>Blank (hide template key)</option>`);
 		Object.entries(cache.keytypes).forEach(([t, d]) => {
 			if (t === 'none') return;
@@ -183,30 +187,47 @@
 	}
 
 	/** Key grid. `own` = keys stored on this object, `effective` = what the phone gets (device only). */
-	function keysEditor(count, own, effective, isDevice) {
-		return keysToolbar(count) + bankTable(count, own, effective, isDevice, 'line');
+	/**
+	 * Key grid. `own` = keys stored on this object. On a phone, `tpl` = what its
+	 * template chain puts on each key (resolved labels), shown beside the
+	 * phone's own override.
+	 */
+	function keysEditor(count, own, tpl, isDevice) {
+		return keysToolbar(count, isDevice) + bankTable(count, own, tpl, isDevice, 'line');
 	}
 
-	function bankTable(count, own, effective, isDevice, bank) {
+	const describeKey = (k) => {
+		if (!k || k.type === 'none') return '—';
+		const type = (cache.keytypes[k.type]?.label || k.type).split(' (')[0];
+		if (k.type === 'line') return `Line ${k.account || 1}${k.label ? ' (' + k.label + ')' : ''}`;
+		return `${type}: ${k.label || k.value}${k.label && k.value && k.label !== k.value ? ' · ' + k.value : ''}`;
+	};
+
+	function bankTable(count, own, tpl, isDevice, bank) {
 		const byPos = {};
 		own.filter((k) => k.bank === bank).forEach((k) => (byPos[k.position] = k));
-		const eff = (effective && effective[bank]) || {};
+		const fromTpl = (tpl && tpl[bank]) || {};
 		let rows = '';
 		for (let p = 1; p <= count; p++) {
 			const k = byPos[p] || { type: '', value: '', label: '', account: 1 };
-			const e = eff[p];
-			const hint = e && !byPos[p] ? `${cache.keytypes[e.type]?.label || e.type}: ${e.value} ${e.label ? '(' + e.label + ')' : ''}` : '';
-			rows += `<tr data-pos="${p}" class="${p > 12 && !byPos[p] && !e ? 'op-more' : ''}">
+			const t = fromTpl[p];
+			const hidden = p > 12 && !byPos[p] && !t;
+			const cls = [hidden ? 'op-more' : '', isDevice && byPos[p] ? 'op-override' : ''].join(' ');
+			rows += `<tr data-pos="${p}" class="${cls}">
 				<td class="text-muted">${p}</td>
-				<td><select class="form-control form-control-sm" data-k="type">${keyTypeOptions(k.type, isDevice)}</select>${hint ? `<div class="small text-muted">${esc(hint)}</div>` : ''}</td>
-				<td><input class="form-control form-control-sm" data-k="value" value="${esc(k.value)}" list="op-targets" placeholder="${esc(e && !byPos[p] ? e.value : '')}"></td>
-				<td><input class="form-control form-control-sm" data-k="label" value="${esc(k.label)}" placeholder="${esc(e ? e.label : 'auto from name')}"></td>
+				${isDevice ? `<td class="op-tplcol">${esc(describeKey(t))}</td>` : ''}
+				<td><select class="form-control form-control-sm" data-k="type">${keyTypeOptions(k.type, isDevice)}</select></td>
+				<td><input class="form-control form-control-sm" data-k="value" value="${esc(k.value)}" list="op-targets"></td>
+				<td><input class="form-control form-control-sm" data-k="label" value="${esc(k.label)}" placeholder="auto from name"></td>
 				<td><input class="form-control form-control-sm" data-k="account" type="number" min="1" max="16" value="${esc(k.account || 1)}" style="width:5em"></td></tr>`;
 		}
-		return `<table class="table table-sm op-keys" data-bank="${bank}"><thead><tr><th>#</th><th>Type</th><th>Value</th><th>Label</th><th>Line</th></tr></thead><tbody>${rows}</tbody></table>`;
+		const head = isDevice
+			? '<th>#</th><th>From the template</th><th>This phone</th><th>Value</th><th>Label</th><th>Line</th>'
+			: '<th>#</th><th>Type</th><th>Value</th><th>Label</th><th>Line</th>';
+		return `<table class="table table-sm table-striped table-hover op-keys" data-bank="${bank}"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
 	}
 
-	function keysToolbar(count) {
+	function keysToolbar(count, isDevice) {
 		const targets = cache.targets.map((t) => `<option value="${esc(t.value)}">${esc(t.label)} [${esc(t.category)}${t.hint ? ', BLF' : ''}]</option>`).join('');
 		return `<datalist id="op-targets">${targets}</datalist>
 			<div class="op-toolbar">
@@ -218,15 +239,45 @@
 					<button class="btn btn-sm btn-default" id="op-fill-all">All extensions</button>
 				</span>
 			</div>
-			<p class="small text-muted">Leave a label blank to use the person's current name (renames update phones automatically). Value suggestions include feature codes; <code>{ext}</code> means the phone's own extension (e.g. <code>*21{ext}</code> follow-me toggle).</p>`;
+			<p class="small text-muted">${isDevice
+				? 'Keys follow the template unless you pick something for this phone (highlighted rows). '
+				: ''}Fill writes into the grid below (highlighted); nothing is saved until you click Save. Leave a label blank to use the person's current name (renames update phones automatically). <code>{ext}</code> means the phone's own extension (e.g. <code>*21{ext}</code> follow-me toggle).</p>`;
 	}
 
-	function wireKeys(onFill) {
+	/** Fill consecutive BLF keys in the grid (line bank), overwriting what is there. Not saved until Save. */
+	function fillGrid(exts, start, exclude = []) {
+		const list = exts.filter((x) => !exclude.includes(x));
+		const rows = $$('.op-keys[data-bank="line"] tbody tr');
+		let pos = start;
+		const filled = [];
+		for (const ext of list) {
+			const tr = rows.find((r) => +r.dataset.pos === pos);
+			if (!tr) break;
+			tr.querySelector('[data-k="type"]').value = 'blf';
+			tr.querySelector('[data-k="value"]').value = ext;
+			tr.querySelector('[data-k="label"]').value = '';
+			tr.classList.add('op-changed', 'op-show');
+			filled.push(pos);
+			pos++;
+		}
+		if (!filled.length) return say('Nothing to fill (no keys left after that position, or no extensions selected).', 'warning');
+		const skipped = list.length - filled.length;
+		say(`Filled keys ${filled[0]}–${filled[filled.length - 1]} with ${filled.length} extension(s)${skipped ? ` (${skipped} didn't fit)` : ''}. Not saved yet — click Save to apply.`, 'info');
+		rows.find((r) => +r.dataset.pos === filled[0])?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+	}
+
+	function wireKeys(exclude = []) {
 		const more = $('[data-toggle-more]');
 		if (more) more.onclick = (e) => { e.preventDefault(); $$('.op-keys tr.op-more').forEach((r) => r.classList.toggle('op-show')); };
-		const fill = async (exts) => onFill(exts, +$('#op-fill-start').value || 1);
-		$('#op-fill').onclick = (e) => { e.preventDefault(); const exts = Array.from($('#op-fill-exts').selectedOptions).map((o) => o.value); if (exts.length) guard(e.target, () => fill(exts)); };
-		$('#op-fill-all').onclick = (e) => { e.preventDefault(); guard(e.target, () => fill('all')); };
+		const start = () => +$('#op-fill-start').value || 1;
+		$('#op-fill').onclick = (e) => {
+			e.preventDefault();
+			const exts = Array.from($('#op-fill-exts').selectedOptions).map((o) => o.value);
+			if (!exts.length) return say('Pick one or more extensions to fill first.', 'warning');
+			fillGrid(exts, start(), exclude);
+		};
+		$('#op-fill-all').onclick = (e) => { e.preventDefault(); fillGrid(cache.extensions.map((x) => x.extension), start(), exclude); };
+		$$('.op-keys select, .op-keys input').forEach((el) => el.addEventListener('change', () => el.closest('tr').classList.add('op-changed')));
 		// Picking a known target fills the type for you.
 		$$('.op-keys [data-k="value"]').forEach((inp) => (inp.onchange = () => {
 			const t = cache.targets.find((x) => x.value === inp.value);
@@ -254,9 +305,19 @@
 		};
 		const model = cache.models.find((m) => m.id === d.model) || cache.models[0];
 		const lineRows = (d.lines.length ? d.lines : [{ account: 1, extension: '' }]).map((l) => lineRow(l)).join('');
+		const tv = d.template_view || { name: null, chain: [], settings: {}, keys: {} };
+		const nKeys = d.keys.filter((k) => k.type !== '').length;
+		const nSettings = Object.keys(d.settings || {}).filter((k) => k !== 'expansion_modules').length;
+		const nRaw = Object.keys(d.raw || {}).length;
 		main.innerHTML = `
 			<div class="op-toolbar"><a href="#" id="op-back">&larr; Phones</a></div>
 			<h3>${id ? esc(d.name || d.mac_pretty) : 'Add phone'}</h3>
+			${id ? `<div class="alert ${tv.name ? 'alert-secondary' : 'alert-warning'} op-tplbox">
+				${tv.name
+					? `Uses template <b>${tv.chain.map((t) => esc(t.name)).join(' → ')}</b> <a href="#" id="op-goto-tpl" class="ml-2">Edit template &rarr;</a>`
+					: 'No template: everything below comes from the built-in defaults and this phone.'}
+				<div class="small mt-1">Overrides on this phone: <b>${nKeys}</b> key(s) · <b>${nSettings}</b> setting(s) · <b>${nRaw}</b> raw key(s). Everything else follows the template.</div>
+			</div>` : ''}
 			${d.render_error ? `<div class="alert alert-danger">${esc(d.render_error)}</div>` : ''}
 			${id && d.in_sync === false ? '<div class="alert alert-info">This phone has not fetched its latest configuration yet.</div>' : ''}
 			<div class="form-row">
@@ -267,7 +328,7 @@
 				<div class="form-group col-md-1"><label>Enabled</label><select class="form-control" id="op-enabled"><option value="1">Yes</option><option value="0" ${d.enabled ? '' : 'selected'}>No</option></select></div>
 			</div>
 			<h4>Lines</h4>
-			<table class="table table-sm" id="op-lines"><thead><tr><th>Account</th><th>Extension</th><th>Label</th><th></th></tr></thead><tbody>${lineRows}</tbody></table>
+			<table class="table table-sm table-striped" id="op-lines"><thead><tr><th>Account</th><th>Extension</th><th>Label</th><th></th></tr></thead><tbody>${lineRows}</tbody></table>
 			<button class="btn btn-sm btn-default" id="op-add-line">Add line</button>
 			<ul class="nav nav-tabs mt-3" id="op-subtabs">
 				<li class="nav-item"><a class="nav-link active" href="#" data-sub="keys">Keys</a></li>
@@ -275,10 +336,10 @@
 				<li class="nav-item"><a class="nav-link" href="#" data-sub="raw">Raw keys</a></li>
 				${id ? '<li class="nav-item"><a class="nav-link" href="#" data-sub="config">Config preview</a></li><li class="nav-item"><a class="nav-link" href="#" data-sub="activity">Activity</a></li>' : ''}
 			</ul>
-			<div class="op-sub" data-pane="keys">${keysEditor(model.lineKeys || 0, d.keys, d.effective?.keys, true)}
+			<div class="op-sub" data-pane="keys">${keysEditor(model.lineKeys || 0, d.keys, tv.keys, true)}
 				${model.expansion ? `<div class="form-inline mb-2"><label class="mr-2">Expansion modules attached</label><select class="form-control form-control-sm" data-setting="expansion_modules">${[0, 1, 2, 3, 4, 5, 6].slice(0, model.expansion.modules + 1).map((n) => `<option value="${n}" ${String(d.settings.expansion_modules || 0) === String(n) ? 'selected' : ''}>${n}</option>`).join('')}</select></div>` : ''}
-				${model.expansion ? Array.from({ length: model.expansion.modules }, (_, i) => `<details class="mb-2" ${d.keys.some((k) => k.bank === 'exp' + (i + 1)) ? 'open' : ''}><summary>Expansion module ${i + 1} (${model.expansion.keysPerModule} keys)</summary>${bankTable(model.expansion.keysPerModule, d.keys, d.effective?.keys, true, 'exp' + (i + 1))}</details>`).join('') : ''}</div>
-			<div class="op-sub d-none" data-pane="settings">${settingsForm(d.settings, d.effective?.settings, true)}</div>
+				${model.expansion ? Array.from({ length: model.expansion.modules }, (_, i) => `<details class="mb-2" ${d.keys.some((k) => k.bank === 'exp' + (i + 1)) ? 'open' : ''}><summary>Expansion module ${i + 1} (${model.expansion.keysPerModule} keys)</summary>${bankTable(model.expansion.keysPerModule, d.keys, tv.keys, true, 'exp' + (i + 1))}</details>`).join('') : ''}</div>
+			<div class="op-sub d-none" data-pane="settings">${settingsForm(d.settings, tv.settings, true)}</div>
 			<div class="op-sub d-none" data-pane="raw"><p class="small text-muted">One <code>key = value</code> per line, written last (after templates). Use for anything the settings don't cover. <code>%NULL%</code> clears a value on the phone.</p><textarea class="form-control op-mono" rows="12" id="op-raw">${esc(rawText(d.raw))}</textarea></div>
 			<div class="op-sub d-none" data-pane="config"><pre class="op-pre" id="op-config">Loading…</pre></div>
 			<div class="op-sub d-none" data-pane="activity"><div id="op-dev-events">Loading…</div></div>
@@ -292,6 +353,7 @@
 			${id ? `<p class="small text-muted">Provisioning user <code>${esc(d.prov_user)}</code> · firmware ${esc(d.last_fw || 'unknown')} · last fetch ${ago(d.last_seen)} from ${esc(d.last_ip || '—')}${d.claimable ? ' · <b>accepts the bootstrap credential</b>' : ''}</p>` : ''}`;
 
 		$('#op-back').onclick = (e) => { e.preventDefault(); devices(); };
+		if ($('#op-goto-tpl')) $('#op-goto-tpl').onclick = (e) => { e.preventDefault(); selectTab('templates'); templateEditor(d.template_id); };
 		$('#op-add-line').onclick = () => {
 			const n = $$('#op-lines tbody tr').length + 1;
 			$('#op-lines tbody').insertAdjacentHTML('beforeend', lineRow({ account: n, extension: '' }));
@@ -305,12 +367,7 @@
 			if (a.dataset.sub === 'config') $('#op-config').textContent = (await api('render', { device: id })).text;
 			if (a.dataset.sub === 'activity') $('#op-dev-events').innerHTML = eventsTable(await api('events', { mac: d.mac, limit: 100 }));
 		}));
-		wireKeys(async (exts, start) => {
-			if (!id) throw new Error('Save the phone first');
-			await api('keys.fill', { scope: 'device', ref: id, extensions: exts, start });
-			say('Keys filled');
-			deviceEditor(id);
-		});
+		wireKeys(d.lines.map((l) => l.extension));
 		$('#op-save').onclick = (e) => guard(e.target, async () => {
 			const lines = $$('#op-lines tbody tr').map((tr) => {
 				const ext = tr.querySelector('[data-l="extension"]').value;
@@ -361,7 +418,7 @@
 			<div class="op-toolbar"><button class="btn btn-primary" id="op-add-tpl">Add template</button></div>
 			<table class="table table-striped table-sm op-table"><thead><tr><th>Name</th><th>Inherits from</th><th>Description</th><th>Phones</th></tr></thead>
 			<tbody>${cache.templates.map((t) => `<tr><td><a href="#" data-edit-tpl="${t.id}">${esc(t.name)}</a></td><td>${esc(t.parent_id ? byId[t.parent_id]?.name : '—')}</td><td>${esc(t.description)}</td><td>${t.devices}</td></tr>`).join('')}</tbody></table>
-			<p class="text-muted small">Templates layer: built-in defaults &rarr; parent template &rarr; template &rarr; phone. A phone only stores what differs.</p>`;
+			<p class="text-muted small">Set phones up here: keys, settings and files live on templates. A template can inherit from another (built-in defaults &rarr; parent &rarr; template), and each phone only stores the few things that differ from its template.</p>`;
 		$('#op-add-tpl').onclick = () => templateEditor(null);
 		$$('[data-edit-tpl]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); templateEditor(+a.dataset.editTpl); }));
 	}
@@ -396,12 +453,7 @@
 			$$('#op-subtabs .nav-link').forEach((x) => x.classList.toggle('active', x === a));
 			$$('.op-sub').forEach((p) => p.classList.toggle('d-none', p.dataset.pane !== a.dataset.sub));
 		}));
-		wireKeys(async (exts, start) => {
-			if (!id) throw new Error('Save the template first');
-			await api('keys.fill', { scope: 'template', ref: id, extensions: exts, start });
-			say('Keys filled');
-			templateEditor(id);
-		});
+		wireKeys();
 		$('#op-save').onclick = (e) => guard(e.target, async () => {
 			const saved = await api('template.save', {
 				id: id || undefined, name: $('#op-tname').value, parent: $('#op-tparent').value || null,
@@ -465,7 +517,7 @@
 
 	// ---- activity ------------------------------------------------------------
 	function eventsTable(list) {
-		return `<table class="table table-sm op-table"><thead><tr><th>Time</th><th>MAC</th><th>IP</th><th>Request</th><th>Status</th><th>Detail</th></tr></thead><tbody>${list.map((e) =>
+		return `<table class="table table-sm table-striped op-table"><thead><tr><th>Time</th><th>MAC</th><th>IP</th><th>Request</th><th>Status</th><th>Detail</th></tr></thead><tbody>${list.map((e) =>
 			`<tr class="${e.status >= 400 ? 'table-warning' : ''}"><td class="text-nowrap">${new Date(e.ts * 1000).toLocaleString()}</td><td><code>${esc(e.mac)}</code></td><td>${esc(e.ip)}</td><td>${esc(e.path)}</td><td>${e.status}</td><td>${esc(e.detail)}</td></tr>`).join('') || '<tr><td colspan="6" class="text-muted">No activity.</td></tr>'}</tbody></table>`;
 	}
 	async function events() {
@@ -491,11 +543,12 @@
 		auto_adopt: 'Create unknown phones automatically on first bootstrap contact.',
 		auto_adopt_template: 'Template id for auto-adopted phones.',
 		admin_password: 'Phone web admin password (not "admin").', user_password: 'Phone web user password.',
-		auto_resync: 'Tell phones to update when their configuration changes (including FreePBX Apply Config).',
+		auto_resync: 'Update phones right away when you save a change in OpenProv.',
+		resync_on_apply_config: 'Also update phones after FreePBX Apply Config when their configuration changed (e.g. a renamed user). Turn off to only update phones by hand or at their next periodic check.',
 		event_retention_days: 'Days of activity to keep.',
 		vpn_external_remote: '"host port" added after the LAN address in VPN profiles, for off-site phones.',
 		default_template_id: 'Template for new phones.',
-		vpn_update_method: 'Yealink 185.x ignores update requests while its VPN is up: reboot = reboot through the phone web API; none = changes apply at the next reboot.',
+		vpn_update_method: 'Phones with the VPN on. auto = reboot only models known to ignore update requests over the VPN (T87W on 185.87.x), check-sync for the rest; reboot = always reboot VPN phones through their web API; notify = always check-sync; none = changes apply at the next reboot.',
 		reboot_only_when_idle: 'Never reboot a phone that is on a call.',
 		reboot_window: 'Only reboot VPN phones inside this window, e.g. 01:00-05:00 (blank = any time).',
 	};
@@ -516,6 +569,10 @@
 			${w.current ? '' : `Run <code>${esc(w.command)}</code> as root.`} System Admin VPN server: ${info.vpn_server ? 'enabled' : 'off'}.</p>
 			<div class="form-row">${rows}</div>
 			<button class="btn btn-primary" id="op-gs-save">Save settings</button>
+			<hr><h4>Phone models</h4>
+			<p class="small text-muted">Brands: Yealink. Each model is a JSON file in <code>models/yealink/</code> (see docs/ADDING-MODELS.md); other brands need a brand driver (<code>src/Brand</code>). Unverified models use vendor data and haven't been checked on hardware.</p>
+			<table class="table table-sm table-striped op-table"><thead><tr><th>Brand</th><th>Model</th><th>Line keys</th><th>Accounts</th><th>Expansion</th><th>Wallpaper</th><th>Verified</th><th>Notes</th></tr></thead>
+			<tbody>${(await lookups()).models.map((m) => `<tr><td>${esc(m.brand)}</td><td>${esc(m.id)}</td><td>${m.lineKeys}</td><td>${m.accounts}</td><td>${m.expansion ? `${m.expansion.modules} × ${m.expansion.keysPerModule}` : '—'}</td><td>${m.wallpaper ? `${m.wallpaper.width}×${m.wallpaper.height}` : '—'}</td><td>${m.verified ? '<span class="badge badge-success">yes</span>' : '<span class="text-muted">no</span>'}</td><td class="small">${m.quirks?.vpnBlocksProvisioning ? '<span class="badge badge-warning">VPN: reboot to update</span> ' : ''}${m.verified ? esc(m.notes || '') : ''}</td></tr>`).join('')}</tbody></table>
 			<hr><h4>Import from Endpoint Manager</h4>
 			<p class="small text-muted">Copies EPM extension mappings (MAC, extension, VPN client) into OpenProv. EPM model names can be mapped, e.g. <code>{"SIP-T57W":"T87W"}</code> for phones that were set up as a stand-in model.</p>
 			<div class="form-row"><div class="col-md-4"><input class="form-control" id="op-epm-map" placeholder='{"SIP-T57W":"T87W"}'></div><div class="col-md-3"><select class="form-control" id="op-epm-tpl">${(await lookups()).templates.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></div>
@@ -539,5 +596,5 @@
 	}
 
 	// ---- boot ----------------------------------------------------------------
-	api('info').then((info) => { cache.info = info; return devices(); }).catch(fail);
+	api('info').then((info) => { cache.info = info; return templates(); }).catch(fail);
 })();

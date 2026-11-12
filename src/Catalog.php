@@ -26,7 +26,7 @@ class Catalog
 				$data['brand'] = $data['brand'] ?? $brand;
 				$this->models[$brand . '/' . $data['id']] = $data + [
 					'accounts' => 1, 'lineKeys' => 0, 'expansion' => null, 'wallpaper' => null,
-					'commonFile' => null, 'ua' => [], 'defaults' => [], 'verified' => false,
+					'commonFile' => null, 'ua' => [], 'defaults' => [], 'verified' => false, 'quirks' => [],
 				];
 			}
 		}

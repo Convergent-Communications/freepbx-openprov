@@ -273,6 +273,13 @@ class Service
 				'vpn_client' => $render['context']['vpn_client'],
 				'accounts' => array_map(fn($a) => array_diff_key($a, ['secret' => 1]), $render['context']['accounts']),
 			];
+			$tctx = $this->builder->context($d, true);
+			$out['template_view'] = [
+				'name' => $d['template_id'] ? ($this->store->template($d['template_id'])['name'] ?? null) : null,
+				'chain' => array_map(fn($t) => ['id' => $t['id'], 'name' => $t['name']], $this->builder->templateChain($d['template_id'])),
+				'settings' => $tctx['settings'],
+				'keys' => $tctx['keys'],
+			];
 		} catch (\Throwable $e) {
 			$out['render_error'] = $e->getMessage();
 		}
@@ -558,6 +565,13 @@ class Service
 		} catch (\Throwable $e) {
 		}
 		$method = $this->settings->get('vpn_update_method');
+		if ($method === 'auto') {
+			// Only models known to ignore check-sync while their VPN is up
+			// (models/*.json quirks.vpnBlocksProvisioning; the T87W on 185.87.x)
+			// are rebooted. The T57W (96.87.0.20) re-syncs fine over the VPN.
+			$model = $this->catalog->model($d['brand'], $d['model']);
+			$method = !empty($model['quirks']['vpnBlocksProvisioning']) ? 'reboot' : 'notify';
+		}
 		if ($vpnClient !== null && $method !== 'notify') {
 			if ($method === 'none') {
 				return ['ok' => false, 'deferred' => false, 'method' => 'none', 'endpoint' => $ep, 'message' => 'VPN phone: automatic updates disabled (applies at next reboot)'];

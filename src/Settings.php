@@ -24,14 +24,15 @@ class Settings
 		'auto_adopt_template' => 0,
 		'admin_password' => '',         // generated on install
 		'user_password' => '',
-		'auto_resync' => true,          // notify phones whose config changed
+		'auto_resync' => true,          // update phones when OpenProv settings change (save)
+		'resync_on_apply_config' => true, // ...and after FreePBX Apply Config (e.g. a user renamed)
 		'event_retention_days' => 30,
 		'vpn_external_remote' => '',    // "host port" added after the LAN remote in vpn.cnf
 		'default_template_id' => 0,
 		// Yealink 185.x ignores check-sync (and its own repeat timer) while
 		// OpenVPN is up, so VPN phones are updated by rebooting them through
 		// their web API (DESIGN.md D8a). 'reboot' | 'notify' | 'none'.
-		'vpn_update_method' => 'reboot',
+		'vpn_update_method' => 'auto',
 		'reboot_only_when_idle' => true,
 		'reboot_window' => '',          // "HH:MM-HH:MM" (PBX local time); blank = any time
 	];
@@ -88,8 +89,8 @@ class Settings
 		} else {
 			$value = trim((string) $value);
 		}
-		if ($key === 'vpn_update_method' && !in_array($value, ['reboot', 'notify', 'none'], true)) {
-			throw new \InvalidArgumentException('vpn_update_method must be reboot, notify or none');
+		if ($key === 'vpn_update_method' && !in_array($value, ['auto', 'reboot', 'notify', 'none'], true)) {
+			throw new \InvalidArgumentException('vpn_update_method must be auto, reboot, notify or none');
 		}
 		if ($key === 'reboot_window' && $value !== '' && !preg_match('/^\d{1,2}:\d{2}-\d{1,2}:\d{2}$/', $value)) {
 			throw new \InvalidArgumentException('reboot_window must look like 01:00-05:00');

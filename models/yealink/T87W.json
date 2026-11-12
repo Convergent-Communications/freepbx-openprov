@@ -18,6 +18,9 @@
   },
   "firmwarePrefix": null,
   "verified": true,
-  "notes": "Line keys 1-84 accepted and 85+ rejected on firmware 185.87.0.42 (probed 2026-11-12). Common file suffix observed in the phone's requests.",
-  "defaults": {}
+  "notes": "Line keys 1-84 accepted and 85+ rejected on firmware 185.87.0.42 (probed 2026-11-12). Common file suffix observed in the phone's requests. Firmware 185.87.0.37/.42 never auto-provisions while OpenVPN is up (docs/YEALINK-VPN-ISSUE.md); OpenProv reboots it through its web API instead.",
+  "defaults": {},
+  "quirks": {
+    "vpnBlocksProvisioning": true
+  }
 }

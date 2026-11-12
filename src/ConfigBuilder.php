@@ -363,8 +363,29 @@ class ConfigBuilder
 			'multicast' => $multicast,
 			'resync_minutes' => (int) ($s['resync_minutes'] ?? 1440),
 			'manage_keys' => ($s['manage_keys'] ?? '1') === '1',
+			'screenshot_from' => ($s['remote_screenshot'] ?? '1') === '1' ? $this->pbxSourceAddresses() : [],
 			'expansion_used' => (int) ($device['settings']['expansion_modules'] ?? 0) > 0,
 		];
+	}
+
+	/**
+	 * Addresses the PBX talks to phones from (the phone's Action URI allow
+	 * list): its LAN address and, when System Admin's VPN server is on, its
+	 * tunnel address. Host names are resolved, since the phone wants IPs.
+	 */
+	public function pbxSourceAddresses(): array
+	{
+		$ips = [];
+		foreach ([$this->settings->internalHost(), $this->vpn->serverEnabled() ? $this->vpn->serverTunnelAddress() : null] as $h) {
+			if ($h === null || $h === '') {
+				continue;
+			}
+			$ip = filter_var($h, FILTER_VALIDATE_IP) ? $h : gethostbyname($h);
+			if (filter_var($ip, FILTER_VALIDATE_IP)) {
+				$ips[] = $ip;
+			}
+		}
+		return array_values(array_unique($ips));
 	}
 
 	/** Schema-mapped (non-computed) settings → vendor keys. */

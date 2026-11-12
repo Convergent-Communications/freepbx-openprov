@@ -33,6 +33,7 @@ class Api
 			'device.save' => '{id?|mac, model, template?, name?, enabled?, settings?, raw?, lines?, keys?}',
 			'device.delete' => '{device}',
 			'device.rearm' => '{device, rotate?: bool}',
+			'device.screenshot' => '{device} — the phone\'s current screen as {mime, data (base64), host}',
 			'keys.set' => '{scope: template|device, ref, keys: [...], bank?, replace?: bool}',
 			'keys.fill' => '{scope, ref, extensions: [..]|"all", start?, bank?, type?}',
 			'render' => '{device, reveal?: bool}',
@@ -85,6 +86,7 @@ class Api
 			case 'device.save': return $s->saveDevice($a);
 			case 'device.delete': return $s->deleteDevice($need('device'));
 			case 'device.rearm': return $s->rearmDevice($need('device'), $bool('rotate', true));
+			case 'device.screenshot': return $s->screenshot($need('device'));
 			case 'keys.set':
 				return $s->setKeys((string) $need('scope'), $need('ref'), (array) ($a['keys'] ?? []), $a['bank'] ?? null, $bool('replace', true));
 			case 'keys.fill':

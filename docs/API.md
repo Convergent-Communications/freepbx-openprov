@@ -33,6 +33,7 @@ arguments can be JSON (`devices='["c4fc221dd637"]'`).
 | `templates.list` / `template.get` / `template.save` / `template.copy` / `template.delete` | | `template.save`: `{id?, name, parent?, description?, settings?, raw?, keys?}` |
 | `devices.list` / `device.get` / `device.save` / `device.delete` | | `device.save`: `{id?\|mac, model, template?, name?, enabled?, settings?, raw?, lines?, keys?}` |
 | `device.rearm` | `device, rotate?` | Accept the bootstrap credential again (after a factory reset) |
+| `device.screenshot` | `device` | The phone's current screen: `{mime, data (base64), host, ts}`. The PBX fetches `/screencapture` from the phone (through the tunnel for VPN phones). Needs the "Allow screenshots from the PBX" setting (on by default) to have reached the phone |
 | `keys.set` | `scope, ref, keys, bank?, replace?` | `scope` = `template`\|`device`. With `replace=false`, the keys given are merged slot by slot |
 | `keys.fill` | `scope, ref, extensions\|"all", start?, bank?, type?` | Fills consecutive BLF keys |
 | `render` | `device, reveal?` | Shows the config the phone gets; secrets are masked unless `reveal` |

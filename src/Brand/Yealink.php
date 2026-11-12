@@ -120,6 +120,14 @@ class Yealink implements Brand
 		$p['static.auto_provision.server.username'] = $ctx['prov']['user'];
 		$p['static.auto_provision.server.password'] = $ctx['prov']['pass'];
 
+		// Screenshots: GET /screencapture from the PBX only (admin auth).
+		// Turning the setting off leaves the phone's Action URI settings alone.
+		if (!empty($ctx['screenshot_from'])) {
+			$b['features.action_uri.enable'] = '1';
+			$b['features.action_uri_limit_ip'] = implode(',', $ctx['screenshot_from']);
+			$b['features.show_action_uri_option'] = '0';
+		}
+
 		// Time
 		$tz = $ctx['timezone'];
 		$b['local_time.time_zone'] = $tz['offset'];

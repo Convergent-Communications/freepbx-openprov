@@ -542,6 +542,20 @@ $tests['template: parent_view shows what a child template inherits'] = function 
 	ok(array_key_exists('backlight_time', $p['parent_view']['settings']), 'defaults for a root template');
 };
 
+$tests['render: screenshots allowed from the PBX addresses only'] = function () {
+	$w = world();
+	phone($w);
+	$w->settings->set('internal_host', '192.0.2.1');
+	$cfg = kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+	eq('1', $cfg['features.action_uri.enable']);
+	eq('192.0.2.1,10.8.0.1', $cfg['features.action_uri_limit_ip']);
+	eq('0', $cfg['features.show_action_uri_option']);
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['remote_screenshot' => '0']]);
+	$cfg = kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+	ok(!isset($cfg['features.action_uri_limit_ip']), 'off = untouched');
+	throws(fn() => $w->svc->screenshot('001565000099'), '');
+};
+
 $tests['service: null template and parent are accepted'] = function () {
 	$w = world();
 	$d = $w->svc->saveDevice(['mac' => MAC, 'model' => 'T87W', 'template' => null]);

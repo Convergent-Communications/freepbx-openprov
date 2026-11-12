@@ -485,6 +485,15 @@
    "help": "Do not use 'admin': recent firmware forces a change-password screen."
   },
   {
+   "id": "remote_screenshot",
+   "label": "Allow screenshots from the PBX",
+   "group": "Security",
+   "type": "bool",
+   "default": "1",
+   "computed": true,
+   "help": "Lets OpenProv show the phone's screen (phone page → Screen). Enables Action URI for the PBX's own addresses only (LAN and VPN tunnel), with the admin password, and no on-screen prompt."
+  },
+  {
    "id": "user_password",
    "label": "Phone user password (blank = global)",
    "group": "Security",

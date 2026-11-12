@@ -657,6 +657,76 @@ class Service
 		return ['ok' => false, 'host' => $hosts[0], 'message' => implode('; ', $err)];
 	}
 
+	/**
+	 * Capture the phone's screen: the PBX fetches https://<phone>/screencapture
+	 * with the admin password (tunnel address first for VPN phones, then the
+	 * last seen IP). Returns ['mime', 'data' (base64), 'host', 'ts'].
+	 */
+	public function screenshot($ref): array
+	{
+		$d = $this->deviceRef($ref);
+		$ctx = $this->builder->context($d);
+		$hosts = [];
+		if ($ctx['vpn_client'] !== null) {
+			$c = $this->vpn->connectedClients()[$ctx['vpn_client']] ?? null;
+			if ($c && $c['address'] !== '') {
+				$hosts[] = $c['address'];
+			}
+		}
+		if ($d['last_ip'] !== '') {
+			$hosts[] = $d['last_ip'];
+		}
+		$hosts = array_values(array_unique($hosts));
+		if (!$hosts) {
+			throw new \RuntimeException('No known address for this phone yet (it has never fetched its config).');
+		}
+		$errors = [];
+		foreach ($hosts as $h) {
+			$hostPart = str_contains($h, ':') ? "[$h]" : $h;
+			$ch = curl_init("https://$hostPart/screencapture");
+			curl_setopt_array($ch, [
+				CURLOPT_RETURNTRANSFER => true,
+				CURLOPT_HTTPAUTH => CURLAUTH_BASIC,
+				CURLOPT_USERPWD => 'admin:' . $ctx['passwords']['admin'],
+				CURLOPT_SSL_VERIFYPEER => false, // phones use their factory certificate
+				CURLOPT_SSL_VERIFYHOST => 0,
+				CURLOPT_CONNECTTIMEOUT => 5,
+				CURLOPT_TIMEOUT => 20,
+			]);
+			$body = curl_exec($ch);
+			$code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+			$type = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+			$err = curl_error($ch);
+			curl_close($ch);
+			if ($body === false) {
+				$errors[] = "$h: $err";
+				continue;
+			}
+			$mime = $this->imageMime($body);
+			if ($code === 200 && $mime !== null) {
+				return ['mime' => $mime, 'data' => base64_encode($body), 'host' => $h, 'ts' => time()];
+			}
+			$errors[] = "$h: HTTP $code" . ($code === 404 || $code === 403 || $code === 412
+				? ' (the phone refused: it needs this config with "Allow screenshots from the PBX" on; update the phone first)'
+				: ($code === 401 ? ' (admin password rejected)' : ($type !== '' ? " ($type)" : '')));
+		}
+		throw new \RuntimeException('Screenshot failed: ' . implode('; ', $errors));
+	}
+
+	private function imageMime(string $b): ?string
+	{
+		if (str_starts_with($b, "\xFF\xD8")) {
+			return 'image/jpeg';
+		}
+		if (str_starts_with($b, "\x89PNG")) {
+			return 'image/png';
+		}
+		if (str_starts_with($b, 'BM')) {
+			return 'image/bmp';
+		}
+		return null;
+	}
+
 	/** Devices whose config shows an extension: as a line or on a key. */
 	public function devicesShowing(string $ext): array
 	{

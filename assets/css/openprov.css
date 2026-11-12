@@ -34,3 +34,4 @@
 .openprov .op-keys tr.op-inherited .form-control { background-color: #e9ecef; color: #6c757d; }
 .openprov .op-keys tr.op-override .form-control { background-color: rgba(23, 162, 184, .12); border-color: #17a2b8; }
 .openprov .op-legend { font-weight: 500; }
+.openprov .op-shot img { max-width: 100%; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,.15); }

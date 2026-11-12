@@ -11,6 +11,7 @@ built to be driven by people (GUI) and by software (CLI and GraphQL).
 - **Layered templates:** parent template → template → phone. Data-driven settings, plus raw `key = value` lines for everything else.
 - **System Admin VPN:** OpenVPN profiles built from System Admin's clients.
 - **Files:** wallpapers (resized per model), ringtones, firmware.
+- **Phone screenshots:** the phone page's Screen tab shows the live screen. The PBX fetches it, so it works for VPN phones too. The phone accepts the request only from the PBX's own addresses.
 - **Automatic updates.** Phones update via SIP check-sync, including over the VPN. Tunnel-bound models (T87W) provision through the tunnel (see `docs/YEALINK-VPN-ISSUE.md`). A web-API reboot is available as an option.
 - **EPM import:** migrates EPM's extension mappings.
 

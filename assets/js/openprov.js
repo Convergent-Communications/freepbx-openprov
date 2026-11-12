@@ -150,13 +150,15 @@
 			const inh = inherited ? inherited[s.id] : s.default;
 			const shown = displayValue(s, inh);
 			const ph = shown !== '' ? shown : 'not set';
+			// In a dropdown the inherited entry sits beside the real choices, so mark it.
+			const inhOpt = shown !== '' ? `${shown} (inherited)` : 'not set (inherited)';
 			const name = `data-setting="${esc(s.id)}"`;
 			let input;
 			const opt = (val, label, sel) => `<option value="${esc(val)}" ${sel ? 'selected' : ''}>${esc(label)}</option>`;
 			if (s.type === 'select' || s.type === 'bool') {
-				input = `<select class="form-control form-control-sm" ${name}>${opt('', ph, v === '')}${selectOptions(s).map((o) => opt(o.value, o.label, String(v) === String(o.value))).join('')}</select>`;
+				input = `<select class="form-control form-control-sm" ${name}>${opt('', inhOpt, v === '')}${selectOptions(s).map((o) => opt(o.value, o.label, String(v) === String(o.value))).join('')}</select>`;
 			} else if (s.type.startsWith('asset:') || s.type === 'vpn') {
-				input = `<select class="form-control form-control-sm" ${name}>${opt('', ph, v === '')}${selectOptions(s).map((o) => opt(o.value, o.label, String(v) === String(o.value))).join('')}</select>`;
+				input = `<select class="form-control form-control-sm" ${name}>${opt('', inhOpt, v === '')}${selectOptions(s).map((o) => opt(o.value, o.label, String(v) === String(o.value))).join('')}</select>`;
 			} else if (s.type === 'textarea') {
 				input = `<textarea class="form-control form-control-sm" rows="2" ${name} placeholder="${esc(ph)}">${esc(v)}</textarea>`;
 			} else if (s.type === 'timezone') {
@@ -374,7 +376,7 @@
 				<li class="nav-item"><a class="nav-link active" href="#" data-sub="keys">Keys</a></li>
 				<li class="nav-item"><a class="nav-link" href="#" data-sub="settings">Settings</a></li>
 				<li class="nav-item"><a class="nav-link" href="#" data-sub="raw">Raw keys</a></li>
-				${id ? '<li class="nav-item"><a class="nav-link" href="#" data-sub="config">Config preview</a></li><li class="nav-item"><a class="nav-link" href="#" data-sub="activity">Activity</a></li>' : ''}
+				${id ? '<li class="nav-item"><a class="nav-link" href="#" data-sub="config">Config preview</a></li><li class="nav-item"><a class="nav-link" href="#" data-sub="activity">Activity</a></li><li class="nav-item"><a class="nav-link" href="#" data-sub="screen">Screen</a></li>' : ''}
 			</ul>
 			<div class="op-sub" data-pane="keys">${keysEditor(model.lineKeys || 0, d.keys, tv.keys, true)}
 				${model.expansion ? `<div class="form-inline mb-2"><label class="mr-2">Expansion modules attached</label><select class="form-control form-control-sm" data-setting="expansion_modules">${[0, 1, 2, 3, 4, 5, 6].slice(0, model.expansion.modules + 1).map((n) => `<option value="${n}" ${String(d.settings.expansion_modules || 0) === String(n) ? 'selected' : ''}>${n}</option>`).join('')}</select></div>` : ''}
@@ -383,6 +385,10 @@
 			<div class="op-sub d-none" data-pane="raw"><p class="small text-muted">One <code>key = value</code> per line, written last (after templates). Use for anything the settings don't cover. <code>%NULL%</code> clears a value on the phone.</p><textarea class="form-control op-mono" rows="12" id="op-raw">${esc(rawText(d.raw))}</textarea></div>
 			<div class="op-sub d-none" data-pane="config"><pre class="op-pre" id="op-config">Loading…</pre></div>
 			<div class="op-sub d-none" data-pane="activity"><div id="op-dev-events">Loading…</div></div>
+			<div class="op-sub d-none" data-pane="screen">
+				<div class="op-toolbar"><button class="btn btn-default" id="op-shot">Capture screen</button><span class="small text-muted" id="op-shot-info"></span></div>
+				<div id="op-shot-box" class="op-shot"></div>
+			</div>
 			<div class="op-toolbar op-actions">
 				<button class="btn btn-primary" id="op-save">Save</button>
 				${id ? `<button class="btn btn-default" id="op-push">Update phone now</button>
@@ -393,6 +399,17 @@
 			${id ? `<p class="small text-muted">Provisioning user <code>${esc(d.prov_user)}</code> · firmware ${esc(d.last_fw || 'unknown')} · last fetch ${ago(d.last_seen)} from ${esc(d.last_ip || '—')}${d.claimable ? ' · <b>accepts the bootstrap credential</b>' : ''}</p>` : ''}`;
 
 		$('#op-back').onclick = (e) => { e.preventDefault(); devices(); };
+		if ($('#op-shot')) $('#op-shot').onclick = (e) => guard(e.target, async () => {
+			$('#op-shot-info').textContent = 'Capturing…';
+			try {
+				const s = await api('device.screenshot', { device: id });
+				$('#op-shot-box').innerHTML = `<img alt="Phone screen" src="data:${s.mime};base64,${s.data}">`;
+				$('#op-shot-info').textContent = `Captured ${new Date(s.ts * 1000).toLocaleTimeString()} via ${s.host}`;
+			} catch (err) {
+				$('#op-shot-info').textContent = '';
+				throw err;
+			}
+		});
 		if ($('#op-goto-tpl')) $('#op-goto-tpl').onclick = (e) => { e.preventDefault(); selectTab('templates'); templateEditor(d.template_id); };
 		$('#op-add-line').onclick = () => {
 			const n = $$('#op-lines tbody tr').length + 1;
@@ -406,6 +423,7 @@
 			$$('.op-sub').forEach((p) => p.classList.toggle('d-none', p.dataset.pane !== a.dataset.sub));
 			if (a.dataset.sub === 'config') $('#op-config').textContent = (await api('render', { device: id })).text;
 			if (a.dataset.sub === 'activity') $('#op-dev-events').innerHTML = eventsTable(await api('events', { mac: d.mac, limit: 100 }));
+			if (a.dataset.sub === 'screen' && !$('#op-shot-box img')) $('#op-shot').click();
 		}));
 		wireKeys(d.lines.map((l) => l.extension));
 		wireSettings();

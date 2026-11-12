@@ -61,8 +61,11 @@ class Assets
 				throw new \InvalidArgumentException('Not an image');
 			}
 		}
-		if ($kind === 'ringtone' && !in_array($mime, self::KINDS['ringtone'], true) && $ext !== 'wav') {
-			throw new \InvalidArgumentException('Ringtones must be WAV files (8 kHz/16 kHz, 16-bit, mono is safest)');
+		if ($kind === 'ringtone') {
+			$head = (string) @file_get_contents($sourcePath, false, null, 0, 12);
+			if (substr($head, 0, 4) !== 'RIFF' || substr($head, 8, 4) !== 'WAVE') {
+				throw new \InvalidArgumentException('Ringtones must be WAV files (8 kHz/16 kHz, 16-bit, mono is safest)');
+			}
 		}
 		if ($kind === 'firmware' && !in_array($ext, ['rom', 'zip', 'bin'], true)) {
 			throw new \InvalidArgumentException('Firmware must be a .rom/.zip/.bin file');

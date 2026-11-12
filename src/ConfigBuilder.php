@@ -338,7 +338,8 @@ class ConfigBuilder
 		}
 
 		// Assets
-		$urls = ['prov' => $this->baseUrl($network)];
+		// prov_direct: reachable without the tunnel (bootstrap answers use it).
+		$urls = ['prov' => $this->baseUrl($network), 'prov_direct' => $this->baseUrl($directNetwork)];
 		$assetBase = $this->baseUrl($fileNetwork, $creds);
 		$wallpaper = function (string $id) use ($assetBase, $model, $device): ?array {
 			if ($id === '' || !($a = $this->store->asset((int) $id)) || $a['kind'] !== 'wallpaper') {
@@ -580,6 +581,14 @@ class ConfigBuilder
 			}
 		}
 		return $out;
+	}
+
+	/** Bootstrap answer: credential + URL only (see Brand::bootstrap). */
+	public function renderBootstrap(array $device, ?string $requestIp = null): string
+	{
+		$ctx = $this->context($device, false, $requestIp);
+		$brand = $this->brand($device['brand']);
+		return $brand->format($brand->bootstrap($ctx), $ctx);
 	}
 
 	/** Full render: ['text' => cfg, 'hash' => sha1, 'context' => ctx]. */

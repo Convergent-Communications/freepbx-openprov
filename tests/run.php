@@ -161,7 +161,7 @@ function world(): object
 	$db = new PDO('sqlite::memory:');
 	$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 	$db->exec('CREATE TABLE openprov_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, brand TEXT DEFAULT "yealink", parent_id INTEGER, description TEXT DEFAULT "", settings TEXT, raw TEXT, updated_at INTEGER DEFAULT 0)');
-	$db->exec('CREATE TABLE openprov_devices (id INTEGER PRIMARY KEY AUTOINCREMENT, mac TEXT UNIQUE, brand TEXT, model TEXT, template_id INTEGER, name TEXT DEFAULT "", enabled INTEGER DEFAULT 1, settings TEXT, raw TEXT, prov_user TEXT DEFAULT "", prov_pass TEXT DEFAULT "", claimable INTEGER DEFAULT 1, last_seen INTEGER DEFAULT 0, last_ip TEXT DEFAULT "", last_ua TEXT DEFAULT "", last_fw TEXT DEFAULT "", last_hash TEXT DEFAULT "", notified_hash TEXT DEFAULT "", updated_at INTEGER DEFAULT 0)');
+	$db->exec('CREATE TABLE openprov_devices (id INTEGER PRIMARY KEY AUTOINCREMENT, mac TEXT UNIQUE, brand TEXT, model TEXT, template_id INTEGER, name TEXT DEFAULT "", enabled INTEGER DEFAULT 1, settings TEXT, raw TEXT, prov_user TEXT DEFAULT "", prov_pass TEXT DEFAULT "", claimable INTEGER DEFAULT 1, last_seen INTEGER DEFAULT 0, last_ip TEXT DEFAULT "", last_ua TEXT DEFAULT "", last_fw TEXT DEFAULT "", last_hash TEXT DEFAULT "", notified_hash TEXT DEFAULT "", cert_pin TEXT DEFAULT "", updated_at INTEGER DEFAULT 0)');
 	$db->exec('CREATE TABLE openprov_lines (id INTEGER PRIMARY KEY AUTOINCREMENT, device_id INTEGER, account INTEGER, extension TEXT DEFAULT "", label TEXT DEFAULT "", custom TEXT, UNIQUE(device_id, account))');
 	$db->exec('CREATE TABLE openprov_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT, scope_id INTEGER, bank TEXT, position INTEGER, type TEXT, value TEXT DEFAULT "", label TEXT DEFAULT "", account INTEGER DEFAULT 1, extra TEXT, UNIQUE(scope, scope_id, bank, position))');
 	$db->exec('CREATE TABLE openprov_assets (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, name TEXT, filename TEXT, mime TEXT DEFAULT "", size INTEGER DEFAULT 0, sha256 TEXT DEFAULT "", model TEXT DEFAULT "", version TEXT DEFAULT "", created_at INTEGER DEFAULT 0)');
@@ -365,22 +365,62 @@ $tests['render: template inheritance and device override'] = function () {
 	throws(fn() => $w->svc->saveTemplate(['id' => $parent['id'], 'parent' => 'Site']), 'itself');
 };
 
-$tests['server: bootstrap, claim, and per-device credentials'] = function () {
+$tests['server: bootstrap gets only a credential; claim; per-device credentials'] = function () {
 	$w = world();
-	$d = phone($w);
-	$pass = $w->store->deviceByMac(MAC)['prov_pass'];
+	$d = phone($w, ['settings' => ['vpn' => 'auto']]);
+	$old = $w->store->deviceByMac(MAC)['prov_pass'];
 	eq(401, $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', null, null)['status']);
 	eq(401, $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', 'boot', 'wrong')['status']);
 	$r = $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', 'boot', 'bootpass');
 	eq(200, $r['status'], 'bootstrap works while claimable');
+	$pass = $w->store->deviceByMac(MAC)['prov_pass'];
+	ok($pass !== $old, 'a fresh device credential per bootstrap answer');
 	ok(str_contains($r['body'], "static.auto_provision.server.password = $pass"));
+	ok(str_contains($r['body'], 'static.auto_provision.repeat.minutes = 1'), 'comes back within a minute');
+	foreach (['account.1.password', 'openvpn.url', 'security.user_password', 'account.1.user_name'] as $secret) {
+		ok(!str_contains($r['body'], $secret), "bootstrap answer has no $secret");
+	}
+	ok(str_contains($r['body'], 'server.url = https://192.0.2.10'), 'direct URL, not the VPN tunnel');
+	eq(401, $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', MAC, $old)['status'], 'the earlier credential is dead');
+	eq(403, $w->server->handle('/c4fc221dd637-vpn.tar', UA, '192.0.2.50', 'boot', 'bootpass')['status'], 'no VPN profile for bootstrap');
 	ok($w->store->deviceByMac(MAC)['claimable'], 'still claimable until the phone uses its own creds');
-	eq(200, $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', MAC, $pass)['status']);
+	$full = $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', MAC, $pass);
+	eq(200, $full['status']);
+	ok(str_contains($full['body'], 'account.1.password'), 'full config with its own credential');
 	ok(!$w->store->deviceByMac(MAC)['claimable'], 'claimed');
-	eq(401, $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', 'boot', 'bootpass')['status'], 'bootstrap refused after claim');
+	eq(404, $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', 'boot', 'bootpass')['status'], 'claimed looks like unknown to bootstrap');
 	eq('185.87.0.37', $w->store->deviceByMac(MAC)['last_fw']);
 	$w->svc->rearmDevice(MAC, false);
 	eq(200, $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', 'boot', 'bootpass')['status'], 're-armed');
+};
+
+$tests['security: remote API never reveals secrets or reads server files; settings reject injection'] = function () {
+	$w = world();
+	phone($w);
+	$remote = new \FreePBX\modules\Openprov\Api($w->svc, 'remote');
+	$admin = new \FreePBX\modules\Openprov\Api($w->svc, 'admin');
+	ok(($remote->call('settings.get', ['reveal' => true])['bootstrap_pass'] ?? '') !== 'bootpass', 'remote: no reveal');
+	eq('bootpass', $admin->call('settings.get', ['reveal' => true])['bootstrap_pass']);
+	throws(fn() => $remote->call('asset.add', ['kind' => 'ringtone', 'name' => 'x.wav', 'path' => '/etc/passwd']), '');
+	throws(fn() => $admin->call('asset.add', ['kind' => 'ringtone', 'name' => 'x.wav', 'path' => '/etc/passwd']), '');
+	$f = tempnam(sys_get_temp_dir(), 'x');
+	file_put_contents($f, "root:x:0:0\n");
+	throws(fn() => (new \FreePBX\modules\Openprov\Api($w->svc, 'cli'))->call('asset.add', ['kind' => 'ringtone', 'name' => 'x.wav', 'path' => $f]), 'WAV');
+	@unlink($f);
+	throws(fn() => $w->settings->set('tls_key', "/etc/asterisk/keys/default.key\n  ErrorLog \"|/bin/sh\""), 'single line');
+	throws(fn() => $w->settings->set('tls_cert', '/etc/x"y'), 'file path');
+	throws(fn() => $w->settings->set('vpn_external_remote', 'host 1194 ; x'), 'host port');
+	$w->settings->set('allowed_networks', "10.0.0.0/8\n192.168.0.0/16");
+	eq('10.0.0.0/8,192.168.0.0/16', $w->settings->get('allowed_networks'));
+};
+
+$tests['security: failed requests are logged at most once a minute; Discover needs the bootstrap credential'] = function () {
+	$w = world();
+	for ($i = 0; $i < 5; $i++) {
+		$w->server->handle('/001565000009.cfg', 'curl', '198.51.100.7', 'x', 'y');
+	}
+	eq(1, count(array_filter($w->store->events(100), fn($e) => $e['ip'] === '198.51.100.7')));
+	eq([], array_column($w->svc->discovered(), 'mac'), 'random credentials do not create discovered phones');
 };
 
 $tests['server: user-agent MAC, allow-list, unknown devices, paths'] = function () {

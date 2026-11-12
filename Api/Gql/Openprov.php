@@ -75,7 +75,7 @@ class Openprov extends Base
 					}
 					$a = isset($args['args']) ? json_decode($args['args'], true) : [];
 					$svc = $this->svc(); // loads the module (and its autoloader) before Api is referenced
-					return json_encode((new Api($svc))->call($args['action'], is_array($a) ? $a : []), JSON_UNESCAPED_SLASHES);
+					return json_encode((new Api($svc, 'remote'))->call($args['action'], is_array($a) ? $a : []), JSON_UNESCAPED_SLASHES);
 				},
 			],
 		];
@@ -106,7 +106,7 @@ class Openprov extends Base
 					}
 					try {
 						$svc = $this->svc();
-						$res = (new Api($svc))->call($input['action'], $a);
+						$res = (new Api($svc, 'remote'))->call($input['action'], $a);
 						return ['status' => true, 'message' => 'ok', 'result' => json_encode($res, JSON_UNESCAPED_SLASHES)];
 					} catch (\Throwable $e) {
 						return ['status' => false, 'message' => $e->getMessage(), 'result' => null];

@@ -2,7 +2,7 @@
 	<rawname>openprov</rawname>
 	<repo>unsupported</repo>
 	<name>OpenProv Phone Provisioning</name>
-	<version>0.1.1</version>
+	<version>0.1.2</version>
 	<publisher>Convergent</publisher>
 	<license>GPLv3+</license>
 	<licenselink>https://www.gnu.org/licenses/gpl-3.0.txt</licenselink>
@@ -61,6 +61,7 @@
 			<field name="last_fw" type="string" length="40" default=""/>
 			<field name="last_hash" type="string" length="40" default=""/>
 			<field name="notified_hash" type="string" length="40" default=""/>
+			<field name="cert_pin" type="string" length="64" default=""/>
 			<field name="updated_at" type="integer" default="0"/>
 			<key name="mac" type="unique">
 				<column name="mac"/>

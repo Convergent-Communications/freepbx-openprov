@@ -268,6 +268,20 @@ class Yealink implements Brand
 		}
 	}
 
+	public function bootstrap(array $ctx): array
+	{
+		return [
+			'static.auto_provision.server.url' => $ctx['urls']['prov_direct'],
+			'static.auto_provision.server.username' => $ctx['prov']['user'],
+			'static.auto_provision.server.password' => $ctx['prov']['pass'],
+			'static.auto_provision.power_on' => '1',
+			// Come back within a minute with the new credential; the full
+			// config then sets the normal resync interval.
+			'static.auto_provision.repeat.enable' => '1',
+			'static.auto_provision.repeat.minutes' => '1',
+		];
+	}
+
 	public function format(array $kv, array $ctx): string
 	{
 		$out = "#!version:1.0.0.1\n";

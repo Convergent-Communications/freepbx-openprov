@@ -7,7 +7,12 @@ namespace FreePBX\modules\Openprov;
  */
 class Api
 {
-	public function __construct(private Service $svc)
+	/**
+	 * $origin: 'cli' (fwconsole, root), 'admin' (the FreePBX GUI) or 'remote'
+	 * (GraphQL API tokens, e.g. the Convergent agent). Only the CLI may name
+	 * files on the server; remote callers never get secrets (reveal is off).
+	 */
+	public function __construct(private Service $svc, private string $origin = 'admin')
 	{
 	}
 
@@ -66,6 +71,12 @@ class Api
 
 	public function call(string $action, array $a, array $files = [])
 	{
+		if ($this->origin !== 'cli') {
+			unset($a['path']);
+		}
+		if ($this->origin === 'remote') {
+			unset($a['reveal']);
+		}
 		$s = $this->svc;
 		$need = function (string $k) use ($a) {
 			if (!isset($a[$k]) || $a[$k] === '') {

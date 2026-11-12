@@ -157,7 +157,7 @@ class Store
 
 	public function touchDevice(int $id, array $fields): void
 	{
-		$allowed = ['last_seen', 'last_ip', 'last_ua', 'last_fw', 'last_hash', 'notified_hash', 'claimable'];
+		$allowed = ['last_seen', 'last_ip', 'last_ua', 'last_fw', 'last_hash', 'notified_hash', 'claimable', 'cert_pin'];
 		$set = [];
 		$args = [];
 		foreach ($fields as $k => $v) {
@@ -363,9 +363,15 @@ class Store
 			"SELECT e.mac, MAX(e.ts) AS last_seen, MAX(e.ip) AS ip, MAX(e.ua) AS ua, COUNT(*) AS hits
 			 FROM openprov_events e LEFT JOIN openprov_devices d ON d.mac = e.mac
 			 WHERE e.mac <> '' AND d.id IS NULL AND e.ts >= ?
+			   AND e.detail = 'unknown device (discovered)'
 			 GROUP BY e.mac ORDER BY last_seen DESC",
 			[$sinceTs]
 		);
+	}
+
+	public function recentEvent(string $ip, string $path, int $status, int $sinceTs): bool
+	{
+		return (bool) $this->one('SELECT 1 AS x FROM openprov_events WHERE ts >= ? AND ip = ? AND path = ? AND status = ? LIMIT 1', [$sinceTs, substr($ip, 0, 64), substr($path, 0, 255), $status]);
 	}
 
 	public function pruneEvents(int $olderThanTs): int

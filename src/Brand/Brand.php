@@ -35,6 +35,13 @@ interface Brand
 	 */
 	public function compile(array $ctx): array;
 
+	/**
+	 * The minimal answer to a bootstrap-authenticated request: only the
+	 * phone's own provisioning credential and URL (no SIP, VPN or admin
+	 * secrets), and an early re-check so it fetches the full config with it.
+	 */
+	public function bootstrap(array $ctx): array;
+
 	/** Serialise a key/value map into the vendor's file format. */
 	public function format(array $kv, array $ctx): string;
 

@@ -549,6 +549,7 @@ class Service
 		}
 		$d['claimable'] = true;
 		$this->store->saveDevice($d);
+		$this->store->touchDevice($d['id'], ['cert_pin' => '']); // re-learn the phone's certificate
 		return $this->getDevice($d['id']);
 	}
 
@@ -849,7 +850,7 @@ class Service
 		$err = [];
 		foreach ($hosts as $h) {
 			try {
-				$pc = new PhoneClient($h, $ctx['passwords']['admin']);
+				$pc = new PhoneClient($h, $ctx['passwords']['admin'], 'admin', 8, $this->phonePin($d, $h));
 				$pc->login();
 				if ($pc->reboot()) {
 					return ['ok' => true, 'host' => $h, 'message' => "rebooting via $h"];
@@ -888,8 +889,14 @@ class Service
 		$errors = [];
 		foreach ($hosts as $h) {
 			$hostPart = str_contains($h, ':') ? "[$h]" : $h;
+			try {
+				$pin = $this->phonePin($d, $h);
+			} catch (\Throwable $e) {
+				$errors[] = $e->getMessage();
+				continue;
+			}
 			$ch = curl_init("https://$hostPart/screencapture");
-			curl_setopt_array($ch, [
+			curl_setopt_array($ch, PhoneClient::curlPin($pin) + [
 				CURLOPT_RETURNTRANSFER => true,
 				CURLOPT_HTTPAUTH => CURLAUTH_BASIC,
 				CURLOPT_USERPWD => 'admin:' . $ctx['passwords']['admin'],
@@ -995,7 +1002,7 @@ class Service
 		$errors = [];
 		foreach ($this->phoneHosts($d, $ctx) as $h) {
 			try {
-				$pc = new PhoneClient($h, $ctx['passwords']['admin']);
+				$pc = new PhoneClient($h, $ctx['passwords']['admin'], 'admin', 8, $this->phonePin($d, $h));
 				$pc->login();
 				$list = array_values(array_filter($pc->resourceList('ringtone'), fn($r) => str_starts_with((string) ($r['value'] ?? ''), 'Resource:')));
 				if (!$list) {
@@ -1051,7 +1058,26 @@ class Service
 		if (!$a || $a['kind'] !== 'ringtone' || !is_file($path = $this->assets->path($a))) {
 			throw new \RuntimeException('No such ringtone');
 		}
-		return ['mime' => 'audio/wav', 'data' => base64_encode(Audio::toPcmWav((string) file_get_contents($path)))];
+		$wav = (string) file_get_contents($path);
+		if (substr($wav, 0, 4) !== 'RIFF' || substr($wav, 8, 4) !== 'WAVE') {
+			throw new \RuntimeException('Not a WAV file');
+		}
+		return ['mime' => 'audio/wav', 'data' => base64_encode(Audio::toPcmWav($wav))];
+	}
+
+	/**
+	 * The pinned public key of the phone at $host, checking its identity on
+	 * first use (certificate CN = MAC). Throws if it isn't that phone.
+	 */
+	private function phonePin(array $d, string $host): string
+	{
+		$fresh = $this->store->device($d['id']);
+		if (($fresh['cert_pin'] ?? '') !== '') {
+			return $fresh['cert_pin'];
+		}
+		$pin = PhoneClient::identify($host, $d['mac']);
+		$this->store->touchDevice($d['id'], ['cert_pin' => $pin]);
+		return $pin;
 	}
 
 	/** Addresses to reach a phone's web server at: VPN tunnel first, then its last seen IP. */

@@ -16,12 +16,52 @@ class PhoneClient
 	private array $cookies = [];
 	private ?string $token = null;
 
+	/** $pin: base64 SHA-256 of the phone's public key; curl refuses any other server. */
 	public function __construct(
 		private string $host,
 		private string $password,
 		private string $user = 'admin',
-		private int $timeout = 8
+		private int $timeout = 8,
+		private ?string $pin = null
 	) {
+	}
+
+	/**
+	 * Identify the phone at $host before trusting it with a password: its TLS
+	 * certificate's CN must be the device's MAC (Yealink phones carry a
+	 * per-device certificate, CN = MAC). Returns the public-key pin to store;
+	 * later connections are pinned to it, so a different machine on that IP
+	 * (DHCP reassignment, spoofing) is refused.
+	 */
+	public static function identify(string $host, string $mac, int $timeout = 6): string
+	{
+		$ctx = stream_context_create(['ssl' => ['capture_peer_cert' => true, 'verify_peer' => false, 'verify_peer_name' => false, 'allow_self_signed' => true]]);
+		$h = str_contains($host, ':') ? "[$host]" : $host;
+		$s = @stream_socket_client("ssl://$h:443", $errno, $errstr, $timeout, STREAM_CLIENT_CONNECT, $ctx);
+		if (!$s) {
+			throw new \RuntimeException("phone $host: no TLS connection ($errstr)");
+		}
+		$cert = stream_context_get_params($s)['options']['ssl']['peer_certificate'] ?? null;
+		fclose($s);
+		$info = $cert ? openssl_x509_parse($cert) : null;
+		$cn = strtolower(preg_replace('/[^0-9a-f]/i', '', (string) ($info['subject']['CN'] ?? '')));
+		if ($cn !== strtolower($mac)) {
+			throw new \RuntimeException("phone $host: certificate is for '" . ($info['subject']['CN'] ?? '?') . "', not $mac; not sending credentials");
+		}
+		return self::pinOf($cert);
+	}
+
+	/** base64(SHA-256(DER SubjectPublicKeyInfo)), the format curl's CURLOPT_PINNEDPUBLICKEY uses. */
+	public static function pinOf($cert): string
+	{
+		$pem = openssl_pkey_get_details(openssl_pkey_get_public($cert))['key'];
+		$der = base64_decode(preg_replace('/-----[^-]+-----|\s+/', '', $pem));
+		return base64_encode(hash('sha256', $der, true));
+	}
+
+	public static function curlPin(?string $pin): array
+	{
+		return $pin ? [CURLOPT_PINNEDPUBLICKEY => 'sha256//' . $pin] : [];
 	}
 
 	private function request(string $method, string $path, $body = null, bool $json = false, ?string $page = null): array
@@ -49,7 +89,7 @@ class PhoneClient
 			CURLOPT_SSL_VERIFYHOST => 0,
 			CURLOPT_CONNECTTIMEOUT => $this->timeout,
 			CURLOPT_TIMEOUT => $this->timeout * 2,
-		]);
+		] + self::curlPin($this->pin));
 		if ($body !== null) {
 			if ($json) {
 				$headers[] = 'Content-Type: application/json;charset=UTF-8';

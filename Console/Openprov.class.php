@@ -78,7 +78,7 @@ class Openprov extends Command
 		}
 
 		try {
-			$result = (new Api($svc))->call($action, $args);
+			$result = (new Api($svc, 'cli'))->call($action, $args);
 		} catch (\InvalidArgumentException $e) {
 			$output->writeln(json_encode(['ok' => false, 'error' => $e->getMessage()], $flags));
 			return 1;

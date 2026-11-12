@@ -79,9 +79,10 @@ all phones:
 - **Bootstrap credential:** shared, as RPS requires. It only works for a phone
   that an admin has added and that hasn't been claimed yet. For anything else
   it's refused: unknown MACs, and phones already set up.
-- **On first fetch:** the phone receives its own random credential (username =
-  its MAC). The moment it uses that credential, the bootstrap credential stops
-  working for that MAC.
+- **On first fetch (bootstrap):** the answer contains *only* a freshly generated device credential (username = its MAC), the direct provisioning URL and a 1-minute re-check. It has no SIP, VPN or admin secrets. Every bootstrap answer generates a new credential, so one handed out earlier stops working.
+- **Claiming:** the phone comes back within a minute with its own credential and gets the full config. That fetch claims the device, and the bootstrap credential stops working for that MAC.
+- **VPN profile:** never served for the bootstrap credential, only the device's own.
+- **Uniform answer:** to the bootstrap credential, a claimed device and an unknown MAC look the same (404), so it can't be used to find out which MACs exist.
 - **Afterwards:** a leaked bootstrap credential gets an attacker nothing for
   phones already in service. A leaked per-device credential exposes only that
   one phone.
@@ -92,16 +93,24 @@ all phones:
   logged.
 
 **Residual risk, accepted:**
-- **The window between adding a phone and its first fetch.** During it,
-  someone who has the bootstrap credential *and* knows that exact MAC could
-  claim it first. You'd see it, because the real phone then gets 401 and the
-  Activity log shows the other IP.
+- **The window between adding a phone and its claim.** During it, someone who has the bootstrap credential *and* knows that exact MAC can get a device credential. That alone yields no secrets. If they then fetch the full config before the real phone does, they claim the device, and the real phone is locked out: its bootstrap gets 404. That's loud: the phone won't provision, and the Activity log shows the other IP. If the real phone bootstraps first, the attacker's credential is replaced and dead.
 - **Mitigations for that window:** add phones just before installing them, use
   `allowed_networks`, or turn `auto_adopt` off (the default).
 - **Rejected:**
   - a shared credential only (above)
   - client certificates per phone (Yealink supports them, but they must be
     loaded before first contact, which defeats zero-touch).
+
+**Talking to phones (screenshots, ringtone fetch, web-API reboot).**
+- **Identity check:** before sending the phone's admin password, OpenProv checks that the phone's TLS certificate is issued to that device. Yealink phones carry a per-device certificate with CN = MAC.
+- **Pinning:** the certificate's public key is then pinned (`openprov_devices.cert_pin`), and every later connection is pinned to it, so a machine that takes over the phone's old IP gets nothing.
+- **Trust on first use:** the pin is learned on the first connection, preferably through the VPN tunnel. Re-arm clears it.
+- **Accepted:** the Yealink device CA isn't available to verify the chain, so a spoofer present at that very first connection and presenting a self-signed cert with the right CN would be trusted.
+
+**API callers.**
+- **CLI (root):** may name server files (`asset.add path`).
+- **FreePBX GUI:** may not name server files.
+- **GraphQL tokens:** never get secrets (`reveal` is ignored) and can't name server files.
 
 ## D5. Layered settings
 

@@ -94,6 +94,23 @@ class Settings
 			$value = filter_var($value, FILTER_VALIDATE_BOOLEAN) ? '1' : '0';
 		} else {
 			$value = trim((string) $value);
+			if ($key === 'allowed_networks') {
+				$value = implode(',', array_filter(array_map('trim', preg_split('/[\s,]+/', $value))));
+			}
+			// Settings end up in Apache's config, phone configs and shell
+			// arguments: no control characters (newlines would inject lines).
+			if (preg_match('/[\x00-\x1f\x7f]/', $value)) {
+				throw new \InvalidArgumentException("Setting '$key' must be a single line without control characters");
+			}
+		}
+		if (in_array($key, ['tls_cert', 'tls_key', 'tls_chain'], true) && $value !== '' && !preg_match('#^/[A-Za-z0-9_./-]+$#', $value)) {
+			throw new \InvalidArgumentException("$key must be an absolute file path (letters, digits, _ . / - only)");
+		}
+		if (in_array($key, ['internal_host', 'external_host', 'vpn_provisioning_host'], true) && $value !== '' && !preg_match('/^[A-Za-z0-9.:-]+$/', $value)) {
+			throw new \InvalidArgumentException("$key must be a host name or IP address");
+		}
+		if ($key === 'vpn_external_remote' && $value !== '' && !preg_match('/^[A-Za-z0-9.:-]+( \d{1,5})?$/', $value)) {
+			throw new \InvalidArgumentException('vpn_external_remote must be "host" or "host port"');
 		}
 		if ($key === 'vpn_update_method' && !in_array($value, ['auto', 'reboot', 'notify', 'none'], true)) {
 			throw new \InvalidArgumentException('vpn_update_method must be auto, reboot, notify or none');

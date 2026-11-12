@@ -47,7 +47,9 @@ class ProvisionServer
 			$mac = strtolower($m[1]);
 			$log['mac'] = $mac;
 			$device = $this->store->deviceByMac($mac);
-			if (!$device || !$this->authFor($device, $user, $pass)) {
+			// The VPN profile holds the client's private key: the device's own
+			// credential only, never the shared bootstrap one.
+			if (!$device || !(Util::eq((string) $user, $device['prov_user']) && Util::eq((string) $pass, $device['prov_pass']))) {
 				return $user === null ? $this->challenge($log, 'vpn auth required') : $this->deny(403, 'vpn auth failed', $log);
 			}
 			return $this->vpnTar($device, $log);
@@ -100,11 +102,32 @@ class ProvisionServer
 		}
 		$usedDevice = Util::eq((string) $user, $device['prov_user']) && Util::eq((string) $pass, $device['prov_pass']);
 		$usedBootstrap = !$usedDevice && $device['claimable'] && $this->isBootstrap($user, $pass);
+		if (!$usedDevice && !$usedBootstrap && $this->isBootstrap($user, $pass)) {
+			// Same answer as for an unknown MAC, so the bootstrap credential
+			// can't be used to find out which MACs exist.
+			return $this->deny(404, 'bootstrap refused: device already claimed', $log, false);
+		}
 		if (!$usedDevice && !$usedBootstrap) {
-			return $this->deny(401, $this->isBootstrap($user, $pass) ? 'bootstrap refused: device already claimed' : 'bad credentials', $log, true);
+			return $this->deny(401, 'bad credentials', $log, true);
 		}
 		if (!$device['enabled']) {
 			return $this->deny(403, 'device disabled', $log);
+		}
+		if ($usedBootstrap) {
+			// Bootstrap: issue a fresh device credential (anything handed out
+			// earlier stops working) and answer with only that credential and
+			// the provisioning URL. The phone comes back with it within a
+			// minute and gets the full config; that fetch claims the device.
+			$device['prov_pass'] = Util::secret(18);
+			$this->store->saveDevice($device);
+			try {
+				$text = $this->builder->renderBootstrap($device, $ip);
+			} catch (\Throwable $e) {
+				return $this->deny(500, 'render failed: ' . $e->getMessage(), $log);
+			}
+			$this->store->touchDevice($device['id'], ['last_seen' => time(), 'last_ip' => $ip, 'last_ua' => $ua, 'last_fw' => $brand->firmwareFromUserAgent($ua)]);
+			$this->store->logEvent($log + ['status' => 200, 'detail' => 'bootstrap: credential issued']);
+			return ['status' => 200, 'headers' => ['Content-Type' => 'text/plain; charset=utf-8', 'Cache-Control' => 'no-store'], 'body' => $text];
 		}
 		try {
 			$out = $this->builder->render($device, $ip);
@@ -119,7 +142,7 @@ class ProvisionServer
 			$touch['claimable'] = false; // phone proved it adopted its own credentials
 		}
 		$this->store->touchDevice($device['id'], $touch);
-		$this->store->logEvent($log + ['status' => 200, 'detail' => ($usedBootstrap ? 'config (bootstrap)' : 'config') . ' ' . substr($out['hash'], 0, 8)]);
+		$this->store->logEvent($log + ['status' => 200, 'detail' => 'config ' . substr($out['hash'], 0, 8)]);
 		return ['status' => 200, 'headers' => ['Content-Type' => 'text/plain; charset=utf-8', 'Cache-Control' => 'no-store'], 'body' => $out['text']];
 	}
 
@@ -227,7 +250,14 @@ class ProvisionServer
 
 	private function deny(int $status, string $why, array $log, bool $challenge = false): array
 	{
-		$this->store->logEvent($log + ['status' => $status, 'detail' => $why]);
+		// Anyone who can reach the port can cause these: log a given
+		// address/path/status at most once a minute, and keep the log bounded.
+		if (!$this->store->recentEvent((string) $log['ip'], (string) $log['path'], $status, time() - 60)) {
+			$this->store->logEvent($log + ['status' => $status, 'detail' => $why]);
+			if (random_int(1, 200) === 1) {
+				$this->store->pruneEvents(time() - max(1, (int) $this->settings->get('event_retention_days')) * 86400);
+			}
+		}
 		$headers = $challenge ? ['WWW-Authenticate' => 'Basic realm="OpenProv"'] : [];
 		return ['status' => $status, 'headers' => $headers, 'body' => "$why\n", 'reason' => $why];
 	}

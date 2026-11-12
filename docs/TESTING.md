@@ -50,6 +50,7 @@ at 192.168.1.246, extension 212.
 | T57W (96.87.0.20) with a self-signed certificate | ❌ The phone rejects it (TLS alert) because "Only Accept Trusted Certificates" is on by default. It works once the certificate is in the phone's trusted list. **Production needs a publicly trusted certificate (e.g. Let's Encrypt via certman), or the CA pushed to the phones, before the first HTTPS fetch** |
 | Provisioning MAC vs. ARP MAC | Wi-Fi models (T87W, T57W) answer ARP with a different MAC than the one they provision with (`80:5e:c0:f4:e6:e8` vs `80:5e:c0:d6:7c:5f`). Use the MAC from the label, the User-Agent or OpenProv's Activity tab |
 | Updating a VPN phone with a web-API reboot through the tunnel (10.8.0.2) | ✅ The phone rebooted. Boot-time provisioning races the VPN coming up (Yealink issue) |
+| FreePBX firewall | ⚠️ With the FreePBX firewall on, OpenProv's port (8443) must be added as a custom service (Connectivity → Firewall → Services → Custom Services) for every zone phones provision from. On the lab, tun0 (VPN) is in the Internal zone, which allowed EPM's port 84 but dropped 8443. The LAN worked only because it's trusted. TODO: register the service automatically on install |
 | GraphQL reads and the `openprovAction` mutation with asterisk-server's OAuth client | ✅ |
 | GUI: list, edit, save (Playwright) | ✅ |
 

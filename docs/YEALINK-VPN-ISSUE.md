@@ -40,6 +40,12 @@ We need remote phones to keep provisioning from our server's **public hostname**
 | 8 | `http://192.168.1.31:84` | Power On | ⚠️ Works only if provisioning runs before the tunnel connects; otherwise no request |
 | 9 | `https://192.168.1.31:8443` | any | ❌ Same as 4 |
 | 10 | Any URL, VPN **disabled** | any trigger | ✅ Works (fetch within about 1 s of check-sync) |
+| 11 | `http://user:pass@192.168.1.31:84` (credentials in URL) | Auto Provision Now | ❌ No connection attempt |
+| 12 | `https://192.168.1.31:8443` (credentials in the username/password fields) | Auto Provision Now | ❌ No connection attempt |
+| 13 | `https://user:pass@192.168.1.31:8443` (credentials in URL) | Auto Provision Now | ❌ No connection attempt |
+| 14 | `https://user:pass@10.8.0.1:8443` (tunnel IP, HTTPS) | Auto Provision Now | ✅ Phone attempts the connection (SYNs seen on the tunnel); this server's firewall dropped them, so only the attempt is relevant here |
+
+Tests 11–14 were run on 2026-11-12 after a **factory reset**: the phone was provisioned fresh, the VPN connected, and the phone was idle before each trigger and rebooted between tests. So the scheme (HTTP or HTTPS) and the way credentials are supplied make no difference. Only whether the destination is inside the tunnel matters.
 
 **Other observations:**
 - After a **successful** fetch through the tunnel (tests 1–3), the status stays `autoprovision` for about 80 s and new triggers are ignored. During that time the config's other URLs, which pointed at the LAN IP, were processed. The only request that eventually arrived from 192.168.1.246 was the firmware URL, about 75 s later.

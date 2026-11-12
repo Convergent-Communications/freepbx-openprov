@@ -23,7 +23,7 @@ fwconsole ma install openprov        # as root: also installs the HTTPS vhost (p
 ```
 
 - **Install as a non-root user?** Run `fwconsole openprov web --install` as root afterwards.
-- **FreePBX firewall:** if it's enabled, allow TCP 8443 from your phone networks.
+- **FreePBX firewall:** if it's enabled, add TCP 8443 as a custom service (Connectivity → Firewall → Services) and enable it for every zone phones provision from, including the zone of the VPN interface (`tun0`, Internal by default). Otherwise VPN phones can't reach OpenProv.
 
 ## Bring a phone online
 

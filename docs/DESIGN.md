@@ -27,39 +27,81 @@ what was chosen, why, and what was rejected.
   - It doesn't clash with EPM, autoprov or CalNu files in `/tftpboot`.
 - **Cost:** each fetch runs PHP and SQL. This is trivial at phone scale.
 
-## D3. Its own Apache virtual host, HTTPS first
+## D3. Its own Apache virtual host, HTTPS first, on its own port
 
 - **Chosen:** `fwconsole openprov web --install` writes
   `/etc/apache2/sites-enabled/openprov.conf`. It defines an HTTPS listener
   (default 8443, using certman's default certificate unless configured) and an
-  optional HTTP listener (default off; port 8088 when enabled). Every path is
-  rewritten to `web/prov.php`. Writing Apache config needs root, so module
-  install calls it only when running as root; otherwise the GUI and CLI explain
-  the one command to run.
-- **Why:**
-  - TFTP is ruled out by the owner, and plain HTTP leaks SIP secrets.
-  - System Admin's provisioning vhost (`sangoma.conf`) isn't enabled on the
-    Debian FreePBX 17 install, and it's ionCube-encoded, so we can't rely on it.
-- **HTTP mode:** exists only for labs, and for phones that can't trust the
-  certificate yet. It is off by default.
+  optional HTTP listener (default off; port 8088 when enabled). Every path goes
+  to `web/prov.php`; nothing else on the box is reachable through it. Writing
+  Apache config needs root, so module install calls it only when running as
+  root; otherwise the GUI and CLI show the one command to run.
+- **Why a separate port rather than FreePBX's 443/80:**
+  - **Firewall exposure.** Remote phones must reach provisioning from the
+    internet. FreePBX's 443 is the admin GUI. A dedicated port can be opened to
+    the world (or to customer networks) without exposing the admin GUI or UCP.
+  - **Isolation.** The vhost serves exactly one script, ignores every
+    `.htaccess` under /admin, and can have its own TLS settings, logs and
+    certificate. Breaking or locking down the admin site doesn't affect
+    phones, and the reverse.
+  - **No collision** with System Admin's provisioning ports (84 and others) or
+    with EPM, which keep working for older phones.
+  - **Any port works.** It's a setting, so 443 is fine on a box with a
+    dedicated IP or no admin GUI on 443.
+- **Why HTTPS:** TFTP is ruled out, and plain HTTP sends SIP passwords in the
+  clear.
+- **Certificates (hardware finding, 2026-11-12):**
+  - The T57W (96.87.0.20) refuses a self-signed certificate by default ("Only
+    Accept Trusted Certificates"). The T87W accepted it.
+  - Production therefore needs a publicly trusted certificate on the
+    provisioning vhost (certman / Let's Encrypt for the PBX hostname), or the
+    CA pushed to phones beforehand (RPS / factory config).
+- **HTTP mode:** for labs only. It is off by default.
 
 ## D4. Per-device credentials, with trust on first use
 
-- **The problem:** a factory-fresh phone only knows what DHCP option 66 or
-  Yealink RPS tells it. That is necessarily a shared URL and credential.
-- **First contact:** a phone may authenticate with the site-wide *bootstrap*
-  credential only while its device row is `claimable`. That is the state when a
-  device is first added, or re-armed after a factory reset.
-- **Rotation:** the first config served sets per-device credentials
-  (`static.auto_provision.server.username/password`) and turns
-  `claimable` off. After that, only the per-device credential works for that
-  MAC.
-- **Extra checks:**
-  - The requested MAC must match the MAC in the User-Agent.
-  - An optional list of allowed source networks.
-- **Logging:** every request is logged in `openprov_events`.
-- **Rejected:** a single shared credential, which is what EPM and System Admin
-  use. Anyone holding it can download every SIP secret by guessing MACs.
+**What it protects.** A phone's config contains its SIP password (and, with
+VPN, its OpenVPN private key). Whoever can fetch `<mac>.cfg` can register as
+that extension (toll fraud, eavesdropping on calls) or join the VPN.
+
+**Why a single shared credential is weak.** That's the EPM / System Admin model,
+and Yealink RPS and DHCP option 66 can only hand out one URL and credential for
+all phones:
+- The credential is on every phone: in its web UI, its config export and its
+  DHCP options. One stolen or second-hand phone, or one curious user, has it.
+- MACs aren't secret. Yealink MACs start with a handful of OUIs (`80:5e:c0`,
+  `c4:fc:22`, `00:15:65`, `24:9a:d8`, ...) and are printed on the box and
+  label, so the rest can be enumerated.
+- **Shared credential + MAC = every phone's SIP password.** Rotating it means
+  touching every phone.
+
+**What OpenProv does instead:**
+- **Bootstrap credential:** shared, as RPS requires. It only works for a phone
+  that an admin has added and that hasn't been claimed yet. For anything else
+  it's refused: unknown MACs, and phones already set up.
+- **On first fetch:** the phone receives its own random credential (username =
+  its MAC). The moment it uses that credential, the bootstrap credential stops
+  working for that MAC.
+- **Afterwards:** a leaked bootstrap credential gets an attacker nothing for
+  phones already in service. A leaked per-device credential exposes only that
+  one phone.
+- **Re-arm:** after a factory reset, "Re-arm" (optionally rotating the
+  password) re-opens the bootstrap window for that one phone.
+- **Extra checks:** the User-Agent MAC must match the requested MAC, an
+  optional CIDR allow-list, and every request (including refused ones) is
+  logged.
+
+**Residual risk, accepted:**
+- **The window between adding a phone and its first fetch.** During it,
+  someone who has the bootstrap credential *and* knows that exact MAC could
+  claim it first. You'd see it, because the real phone then gets 401 and the
+  Activity log shows the other IP.
+- **Mitigations for that window:** add phones just before installing them, use
+  `allowed_networks`, or turn `auto_adopt` off (the default).
+- **Rejected:**
+  - a shared credential only (above)
+  - client certificates per phone (Yealink supports them, but they must be
+    loaded before first contact, which defeats zero-touch).
 
 ## D5. Layered settings
 

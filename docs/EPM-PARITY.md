@@ -43,3 +43,14 @@ noted.
 | **API** | ✅ new | fwconsole JSON actions and GraphQL (EPM has only a minimal GQL) |
 | **Feature-code BLFs** (time conditions, call flows, follow-me/DND/CF toggles, park slots) | ✅ new | Catalog with hint detection |
 | **Coexistence with EPM** | ✅ | Doesn't touch `/tftpboot`, EPM tables or notify config files |
+
+## Known gaps (not started, by decision or priority)
+
+| Gap | Notes |
+|---|---|
+| DECT base stations (Yealink W60B/W70B) | Needs the base-station model plus handset ↔ extension mapping (a base serves several handsets) |
+| Hot-desk emergency caller IDs | Not used today; EPM sets a fallback emergency CID when no one is logged into a hot-desk phone |
+| REST phone apps picker | Keys can point at any XML browser URL; there's no picker for FreePBX's REST apps |
+| Queue login/pause keys | Deferred (2026-11-12). FreePBX's queue hints depend on the agent and queue |
+| UCP self-service | Planned through the Convergent dashboard (permission-gated), not UCP |
+| Brands other than Yealink | Brand driver interface exists (`src/Brand`); no other driver yet |

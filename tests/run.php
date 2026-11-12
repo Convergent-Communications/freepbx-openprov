@@ -178,8 +178,10 @@ function world(): object
 	$settings->set('bootstrap_pass', 'bootpass');
 	$settings->set('admin_password', '24681357');
 	$settings->set('user_password', '1357');
+	$db->exec('CREATE TABLE openprov_features (id TEXT PRIMARY KEY, slot INTEGER DEFAULT 0, def TEXT, updated_at INTEGER DEFAULT 0)');
 	$store = new Store($db);
 	$catalog = new Catalog(dirname(__DIR__) . '/models');
+	\FreePBX\modules\Openprov\Features::load($store, $catalog);
 	$pbx = new FakePbx($db);
 	$vpn = new FakeVpn($db);
 	$dir = sys_get_temp_dir() . '/openprov-test-' . bin2hex(random_bytes(4));
@@ -740,6 +742,44 @@ $tests['features: captions on/off/unmanaged, slots, globals, models'] = function
 	$d = $w->svc->getDevice('001565000002');
 	ok(str_contains(implode(' ', $d['warnings']), 'not available on the T46S'));
 	ok(!isset(kv($w->builder->render($w->store->deviceByMac('001565000002'))['text'])['softkey.1.enable']));
+};
+
+$tests['features: custom softkeys from the GUI keep permanent slots'] = function () {
+	$w = world();
+	$cam = $w->svc->saveFeature(['id' => 'door_cam', 'name' => 'Door camera', 'kind' => 'softkey_url', 'button_label' => 'Door', 'url' => 'http://{pbx}:8080/cam/{ext}', 'states' => ['idle', 'on_talk'], 'create' => true]);
+	eq(2, $cam['slot'], 'captions has slot 1');
+	$park = $w->svc->saveFeature(['id' => 'park_view', 'name' => 'Parked calls', 'kind' => 'softkey_url', 'button_label' => 'Parked', 'url' => 'http://x/p', 'states' => ['idle'], 'create' => true]);
+	eq(3, $park['slot']);
+	throws(fn() => $w->svc->saveFeature(['id' => 'captions', 'name' => 'x', 'kind' => 'softkey_url', 'button_label' => 'x', 'url' => 'http://x', 'states' => ['idle']]), 'built-in');
+	throws(fn() => $w->svc->saveFeature(['id' => 'bad', 'name' => 'x', 'kind' => 'softkey_url', 'button_label' => 'x', 'url' => 'ftp://x', 'states' => ['idle']]), 'http');
+	phone($w, ['settings' => ['feature.captions' => '1', 'feature.door_cam' => '1', 'feature.park_view' => '1']]);
+	$w->settings->set('internal_host', '192.0.2.1');
+	$c = kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+	eq('$KLineKey84$', $c['softkey.1.action']);
+	eq('$KLineKey83$', $c['softkey.2.action']);
+	eq('http://192.0.2.1:8080/cam/212', $c['linekey.83.value']);
+	eq('1', $c['softkey.2.use.idle']);
+	eq('0', $c['softkey.3.use.on_talk']);
+	eq('$KLineKey82$', $c['softkey.3.action']);
+	// in use: delete refused
+	throws(fn() => $w->svc->deleteFeature('door_cam'), 'Still set on');
+	// cleared everywhere -> deleted; park_view keeps slot 3 (no shift into door_cam's slot)
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['feature.captions' => '1', 'feature.park_view' => '1']]);
+	$w->svc->deleteFeature('door_cam');
+	$c = kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+	eq('$KLineKey82$', $c['softkey.3.action'], 'unchanged after another feature was deleted');
+	ok(!isset($c['softkey.2.enable']));
+	// a new feature reuses the free slot 2
+	eq(2, $w->svc->saveFeature(['id' => 'new_one', 'name' => 'N', 'kind' => 'softkey_url', 'button_label' => 'N', 'url' => 'http://n', 'states' => ['idle'], 'create' => true])['slot']);
+	// advanced
+	$adv = $w->svc->saveFeature(['id' => 'dnd_note', 'name' => 'Note', 'kind' => 'advanced', 'requires' => ['edk'], 'claims' => ['softkey' => 1],
+		'variables' => [['id' => 'text', 'label' => 'Text', 'default' => 'Hi {ext}']],
+		'lines' => "softkey.{softkey}.enable = 1\nsoftkey.{softkey}.label = {text}", 'remove' => "softkey.{softkey}.enable = 0", 'create' => true]);
+	eq(4, $adv['slot']);
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['feature.dnd_note' => '1']]);
+	eq('Hi 212', kv($w->builder->render($w->store->deviceByMac(MAC))['text'])['softkey.4.label']);
+	throws(fn() => $w->svc->saveFeature(['id' => 'bad2', 'name' => 'B', 'kind' => 'advanced', 'lines' => "bad key! = 1"]), 'Invalid config key');
+	ok(count(array_filter($w->catalog->schema('yealink'), fn($s) => $s['id'] === 'feature.dnd_note.text')) === 1, 'variables become settings');
 };
 
 $tests['service: null template and parent are accepted'] = function () {

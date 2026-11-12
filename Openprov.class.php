@@ -53,6 +53,7 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 		);
 		$store = new Store($this->db);
 		$catalog = new Catalog(__DIR__ . '/models');
+		\FreePBX\modules\Openprov\Features::load($store, $catalog);
 		$pbx = new Pbx($this->db, $this->FreePBX);
 		$vpn = new Vpn($this->db);
 		$assets = new Assets($store, $this->assetDir());

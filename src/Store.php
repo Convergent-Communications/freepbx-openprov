@@ -253,6 +253,29 @@ class Store
 		}
 	}
 
+	// ---- add-on features (custom definitions + permanent slots) ---------------
+
+	/** id => ['slot' => int, 'def' => json|null] */
+	public function featureRows(): array
+	{
+		$out = [];
+		foreach ($this->all('SELECT id, slot, def FROM openprov_features ORDER BY slot') as $r) {
+			$out[$r['id']] = ['slot' => (int) $r['slot'], 'def' => $r['def']];
+		}
+		return $out;
+	}
+
+	public function saveFeatureRow(string $id, int $slot, ?string $def): void
+	{
+		$this->exec('DELETE FROM openprov_features WHERE id = ?', [$id]);
+		$this->exec('INSERT INTO openprov_features (id, slot, def, updated_at) VALUES (?,?,?,?)', [$id, $slot, $def, time()]);
+	}
+
+	public function deleteFeatureRow(string $id): void
+	{
+		$this->exec('DELETE FROM openprov_features WHERE id = ?', [$id]);
+	}
+
 	/** Every key (template or device) that points at an extension value. */
 	public function keysReferencing(string $value): array
 	{

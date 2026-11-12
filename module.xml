@@ -2,7 +2,7 @@
 	<rawname>openprov</rawname>
 	<repo>unsupported</repo>
 	<name>OpenProv Phone Provisioning</name>
-	<version>0.1.0</version>
+	<version>0.1.1</version>
 	<publisher>Convergent</publisher>
 	<license>GPLv3+</license>
 	<licenselink>https://www.gnu.org/licenses/gpl-3.0.txt</licenselink>
@@ -123,6 +123,12 @@
 			<key name="mac" type="index">
 				<column name="mac"/>
 			</key>
+		</table>
+		<table name="openprov_features">
+			<field name="id" type="string" length="40" primarykey="true"/>
+			<field name="slot" type="integer" default="0"/>
+			<field name="def" type="text" notnull="false"/>
+			<field name="updated_at" type="integer" default="0"/>
 		</table>
 	</database>
 </module>

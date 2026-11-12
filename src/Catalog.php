@@ -10,6 +10,8 @@ class Catalog
 	private array $models = [];
 	private array $schemas = [];
 	private array $features = [];
+	private array $customFeatures = [];
+	private array $featureSlots = [];
 
 	public function __construct(private string $dir)
 	{
@@ -45,10 +47,33 @@ class Catalog
 		}
 	}
 
-	/** Add-on features for a brand, id => definition. */
+	/** Add-on features for a brand (built-in + custom), id => definition with 'slot', in slot order. */
 	public function features(string $brand): array
 	{
-		return $this->features[$brand] ?? [];
+		$all = ($this->features[$brand] ?? []) + ($this->customFeatures[$brand] ?? []);
+		foreach ($all as $id => &$f) {
+			$f += ['requires' => [], 'claims' => [], 'variables' => [], 'globals' => [], 'lines' => [], 'remove' => [], 'custom' => false];
+			$f['slot'] = $this->featureSlots[$id] ?? 0;
+		}
+		unset($f);
+		uasort($all, fn($a, $b) => [$a['slot'] ?: 99, $a['id'] ?? ''] <=> [$b['slot'] ?: 99, $b['id'] ?? '']);
+		return $all;
+	}
+
+	public function isBuiltinFeature(string $brand, string $id): bool
+	{
+		return isset($this->features[$brand][$id]);
+	}
+
+	/** Custom features (from the GUI); built-in ids win. */
+	public function setCustomFeatures(string $brand, array $defs): void
+	{
+		$this->customFeatures[$brand] = array_diff_key($defs, $this->features[$brand] ?? []);
+	}
+
+	public function setFeatureSlots(array $slots): void
+	{
+		$this->featureSlots = $slots;
 	}
 
 	public function models(?string $brand = null): array

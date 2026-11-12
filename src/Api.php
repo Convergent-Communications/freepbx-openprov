@@ -37,6 +37,9 @@ class Api
 			'ringtones.fetch' => '{device} — fetch that phone\'s built-in ringtones into the cache',
 			'ringtone.audio' => '{ref: asset:<id> | Resource:<name>.wav, model?} — {mime, data (base64)} for listening',
 			'keys.prune' => ' — remove keys that only repeat what the template already has (all templates and phones); returns {removed}',
+			'features.list' => ' — every add-on feature (built-in and custom) with slot, lines and where it is used',
+			'feature.save' => '{id, name, kind: softkey_url|advanced, button_label, url, states[] | requires[], claims{lineKey,softkey}, variables[], lines, remove, globals}',
+			'feature.delete' => '{id} — custom features only, and only when no template/phone sets it',
 			'device.sync' => '{device, since?: unix time} — {sync: current|pending|stale|never|error, last_seen, events since}',
 			'device.screenshot' => '{device} — the phone\'s current screen as {mime, data (base64), host}',
 			'keys.set' => '{scope: template|device, ref, keys: [...], bank?, replace?: bool}',
@@ -94,6 +97,9 @@ class Api
 			case 'device.rearm': return $s->rearmDevice($need('device'), $bool('rotate', true));
 			case 'device.screenshot': return $s->screenshot($need('device'));
 			case 'keys.prune': return ['removed' => $s->pruneRedundantKeys()];
+			case 'features.list': return $s->listFeatures();
+			case 'feature.save': return $s->saveFeature($a);
+			case 'feature.delete': return $s->deleteFeature((string) $need('id'));
 			case 'device.sync': return $s->deviceSync($need('device'), (int) ($a['since'] ?? 0));
 			case 'ringtones.builtin': return (object) $s->builtinRingtones();
 			case 'ringtones.fetch': return $s->fetchBuiltinRingtones($need('device'));

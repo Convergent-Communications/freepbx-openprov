@@ -292,6 +292,136 @@ class Service
 		];
 	}
 
+	// ---- add-on features --------------------------------------------------
+
+	/** Every feature (built-in and custom) with its slot, compiled lines and usage. */
+	public function listFeatures(string $brand = 'yealink'): array
+	{
+		$usage = $this->featureUsage();
+		$out = [];
+		foreach ($this->catalog->features($brand) as $id => $f) {
+			$out[] = [
+				'id' => $id, 'name' => $f['label'] ?? $id, 'description' => $f['description'] ?? '', 'custom' => !empty($f['custom']),
+				'slot' => $f['slot'], 'requires' => $f['requires'], 'claims' => $f['claims'], 'variables' => $f['variables'],
+				'globals' => $f['globals'], 'lines' => $f['lines'], 'remove' => $f['remove'],
+				'source' => $f['source'] ?? null, 'used_by' => $usage[$id] ?? [],
+			];
+		}
+		return $out;
+	}
+
+	/** feature id => ["Template X: On", "Phone Y: Off", …] */
+	private function featureUsage(): array
+	{
+		$out = [];
+		$scan = function (string $what, array $settings) use (&$out) {
+			foreach ($settings as $k => $v) {
+				if (preg_match('/^feature\.([a-z0-9_]+)$/', $k, $m) && in_array((string) $v, ['0', '1'], true)) {
+					$out[$m[1]][] = $what . ': ' . ($v === '1' ? 'On' : 'Off');
+				}
+			}
+		};
+		foreach ($this->store->templates() as $t) {
+			$scan('template ' . $t['name'], $t['settings']);
+		}
+		foreach ($this->store->devices() as $d) {
+			$scan('phone ' . ($d['name'] ?: $d['mac']), $d['settings']);
+		}
+		return $out;
+	}
+
+	/** Create or update a custom feature (see Features::compile for the shapes). */
+	public function saveFeature(array $in, string $brand = 'yealink'): array
+	{
+		$id = strtolower(trim((string) ($in['id'] ?? '')));
+		if (!preg_match('/^[a-z0-9_]{2,30}$/', $id)) {
+			throw new \InvalidArgumentException('Feature id: 2-30 lowercase letters, digits or _');
+		}
+		if ($this->catalog->isBuiltinFeature($brand, $id)) {
+			throw new \InvalidArgumentException("'$id' is a built-in feature; pick another id");
+		}
+		$name = trim((string) ($in['name'] ?? ''));
+		if ($name === '') {
+			throw new \InvalidArgumentException('Feature name is required');
+		}
+		$kind = (string) ($in['kind'] ?? 'softkey_url');
+		$def = ['kind' => $kind, 'name' => $name, 'description' => trim((string) ($in['description'] ?? ''))];
+		if ($kind === 'softkey_url') {
+			$label = trim((string) ($in['button_label'] ?? ''));
+			$url = trim((string) ($in['url'] ?? ''));
+			if ($label === '' || strlen($label) > 32) {
+				throw new \InvalidArgumentException('Softkey label: 1-32 characters');
+			}
+			if (!preg_match('#^https?://\S+$#', $url)) {
+				throw new \InvalidArgumentException('URL must start with http:// or https://');
+			}
+			$states = array_values(array_intersect(array_keys(Features::STATES), (array) ($in['states'] ?? [])));
+			if (!$states) {
+				throw new \InvalidArgumentException('Pick at least one screen to show the softkey on');
+			}
+			$def += ['button_label' => $label, 'url' => $url, 'states' => $states];
+		} elseif ($kind === 'advanced') {
+			$vars = [];
+			foreach ((array) ($in['variables'] ?? []) as $v) {
+				$vid = trim((string) ($v['id'] ?? ''));
+				if ($vid === '') {
+					continue;
+				}
+				if (!preg_match('/^[a-z0-9_]{1,30}$/', $vid) || in_array($vid, ['ext', 'pbx', 'mac', 'lineKey', 'softkey'], true)) {
+					throw new \InvalidArgumentException("Variable id '$vid': lowercase letters, digits, _ (not ext/pbx/mac)");
+				}
+				$vars[] = ['id' => $vid, 'label' => trim((string) ($v['label'] ?? $vid)) ?: $vid, 'default' => (string) ($v['default'] ?? '')];
+			}
+			foreach (['lines', 'remove', 'globals'] as $k) {
+				Features::parseLines((string) ($in[$k] ?? '')); // validates
+			}
+			if (trim((string) ($in['lines'] ?? '')) === '') {
+				throw new \InvalidArgumentException('Advanced features need at least one config line');
+			}
+			$def += [
+				'requires' => array_values(array_intersect(array_keys(Features::CAPABILITIES), (array) ($in['requires'] ?? []))),
+				'claims' => ['lineKey' => empty($in['claims']['lineKey']) ? 0 : 1, 'softkey' => empty($in['claims']['softkey']) ? 0 : 1],
+				'variables' => $vars,
+				'lines' => (string) ($in['lines'] ?? ''), 'remove' => (string) ($in['remove'] ?? ''), 'globals' => (string) ($in['globals'] ?? ''),
+			];
+		} else {
+			throw new \InvalidArgumentException("Unknown feature kind '$kind'");
+		}
+		$rows = $this->store->featureRows();
+		$isNew = !isset($rows[$id]) || $rows[$id]['def'] === null;
+		if ($isNew && !empty($in['create']) && isset($rows[$id])) {
+			throw new \InvalidArgumentException("A feature '$id' already exists");
+		}
+		$slot = $rows[$id]['slot'] ?? Features::freeSlot(array_map(fn($r) => (int) $r['slot'], $rows));
+		if ($slot === null) {
+			throw new \InvalidArgumentException('All ' . Features::MAX_SLOTS . ' feature slots are in use; delete a feature first');
+		}
+		$this->store->saveFeatureRow($id, (int) $slot, json_encode($def));
+		Features::load($this->store, $this->catalog, $brand);
+		$this->afterChange();
+		foreach ($this->listFeatures($brand) as $f) {
+			if ($f['id'] === $id) {
+				return $f;
+			}
+		}
+		return [];
+	}
+
+	/** Delete a custom feature. Refused while templates/phones still set it (On or Off). */
+	public function deleteFeature(string $id, string $brand = 'yealink'): array
+	{
+		if ($this->catalog->isBuiltinFeature($brand, $id)) {
+			throw new \InvalidArgumentException('Built-in features can\'t be deleted');
+		}
+		$used = $this->featureUsage()[$id] ?? [];
+		if ($used) {
+			throw new \InvalidArgumentException("Still set on: " . implode('; ', $used) . ". Set it to Off, let the phones update, then clear it (blank) everywhere before deleting.");
+		}
+		$this->store->deleteFeatureRow($id);
+		Features::load($this->store, $this->catalog, $brand);
+		return ['deleted' => $id];
+	}
+
 	/** Phones whose lines include this extension (a user's own phones). */
 	public function devicesForExtension(string $ext): array
 	{

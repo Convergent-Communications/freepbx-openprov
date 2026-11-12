@@ -71,7 +71,7 @@
 	const refreshLookups = () => { delete cache.models; return lookups(); };
 
 	// ---- tabs ----------------------------------------------------------------
-	const tabs = { devices, templates, assets, discover, events, settings };
+	const tabs = { devices, templates, features, assets, discover, events, settings };
 	function selectTab(name) {
 		$$('[data-tab]', app).forEach((n) => n.classList.toggle('active', n.dataset.tab === name));
 	}
@@ -798,6 +798,97 @@
 			$('#op-copy').onclick = (e) => { const n = prompt('Name for the copy'); if (n) guard(e.target, async () => { const c = await api('template.copy', { template: id, name: n }); await refreshLookups(); templateEditor(c.id); }); };
 			$('#op-delete').onclick = (e) => confirm('Delete this template? Phones using it keep their own settings.') && guard(e.target, async () => { await api('template.delete', { template: id }); await refreshLookups(); templates(); });
 		}
+	}
+
+	// ---- add-on features -------------------------------------------------------
+	const FEATURE_STATES = { on_talk: 'During a call', idle: 'Idle screen', ringing: 'Ringing (incoming)', calling: 'Calling (outgoing)', dialing: 'Dialing', held: 'Call on hold', conferenced: 'In a conference' };
+	const kvText = (o) => Object.entries(o || {}).map(([k, v]) => `${k} = ${v}`).join('\n');
+
+	async function features() {
+		const list = await api('features.list');
+		main.innerHTML = `
+			<p class="text-muted small">Add-on features add things like custom softkeys to phones. Define one here, then switch it <b>On</b> in a template or phone (Settings &rarr; Add-on features). Each feature keeps its own softkey number and hidden line key, so features never collide. <b>Off</b> removes it from phones; blank leaves them alone.</p>
+			<div class="op-toolbar"><button class="btn btn-primary" id="op-add-feature">Add feature</button></div>
+			<table class="table table-striped table-sm op-table"><thead><tr><th>Feature</th><th>Id</th><th>Type</th><th>Slot</th><th>Needs</th><th>Used by</th><th></th></tr></thead><tbody>
+			${list.map((f) => `<tr>
+				<td><a href="#" data-edit-feature="${esc(f.id)}"><b>${esc(f.name)}</b></a><div class="small text-muted">${esc(f.description)}</div></td>
+				<td><code>${esc(f.id)}</code></td>
+				<td>${f.custom ? (f.source && f.source.kind === 'advanced' ? 'Custom (advanced)' : 'Custom softkey') : 'Built-in'}</td>
+				<td>${f.slot ? `${f.claims.softkey ? 'softkey ' + f.slot : ''}${f.claims.softkey && f.claims.lineKey ? ', ' : ''}${f.claims.lineKey ? (f.slot === 1 ? 'top free key' : f.slot + (f.slot === 2 ? 'nd' : f.slot === 3 ? 'rd' : 'th') + ' free key from the top') : ''}` : '<span class="text-danger">none</span>'}</td>
+				<td class="small">${esc((f.requires || []).join(', '))}</td>
+				<td class="small">${f.used_by.length ? f.used_by.map(esc).join('<br>') : '<span class="text-muted">—</span>'}</td>
+				<td>${f.custom ? `<button class="btn btn-sm btn-link text-danger" data-del-feature="${esc(f.id)}">delete</button>` : ''}</td></tr>`).join('')}
+			</tbody></table>`;
+		$('#op-add-feature').onclick = () => featureEditor(null);
+		$$('[data-edit-feature]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); featureEditor(list.find((f) => f.id === a.dataset.editFeature)); }));
+		$$('[data-del-feature]').forEach((b) => (b.onclick = () => confirm(`Delete feature "${b.dataset.delFeature}"?`) && guard(b, async () => { await api('feature.delete', { id: b.dataset.delFeature }); await refreshLookups(); say('Deleted'); features(); })));
+	}
+
+	function featureEditor(f) {
+		const src = (f && f.source) || {};
+		const isNew = !f;
+		const builtin = f && !f.custom;
+		const kind = src.kind || (builtin ? 'builtin' : 'softkey_url');
+		const states = src.states || ['on_talk'];
+		const vars = (src.variables || []).concat([{}, {}]).slice(0, Math.max(3, (src.variables || []).length + 1));
+		main.innerHTML = `
+			<div class="op-toolbar"><a href="#" id="op-back">&larr; Features</a></div>
+			<h3>${isNew ? 'Add feature' : esc(f.name)}</h3>
+			${builtin ? '<div class="alert alert-secondary">Built-in feature (from the module\'s files). Its URL and label are settings: change them in a template or phone under Add-on features.</div>' : ''}
+			<div class="form-row">
+				<div class="form-group col-md-4"><label>Name</label><input class="form-control" id="op-f-name" value="${esc(f ? f.name : '')}" ${builtin ? 'disabled' : ''} placeholder="e.g. Door camera"></div>
+				<div class="form-group col-md-3"><label>Id</label><input class="form-control" id="op-f-id" value="${esc(f ? f.id : '')}" ${isNew ? '' : 'disabled'} placeholder="door_camera"><small class="text-muted">Settings use <code>feature.&lt;id&gt;</code>; can't be changed later.</small></div>
+				<div class="form-group col-md-5"><label>Description</label><input class="form-control" id="op-f-desc" value="${esc(src.description || '')}" ${builtin ? 'disabled' : ''}></div>
+			</div>
+			${builtin ? '' : `<div class="form-group"><label class="mr-3"><input type="radio" name="op-f-kind" value="softkey_url" ${kind === 'softkey_url' ? 'checked' : ''}> Softkey that opens a URL</label>
+				<label><input type="radio" name="op-f-kind" value="advanced" ${kind === 'advanced' ? 'checked' : ''}> Advanced (config lines)</label></div>`}
+			<div data-kind="softkey_url" class="${kind === 'softkey_url' ? '' : 'd-none'}">
+				<div class="form-row">
+					<div class="form-group col-md-3"><label>Softkey label</label><input class="form-control" id="op-f-label" maxlength="32" value="${esc(src.button_label || '')}" placeholder="Camera"></div>
+					<div class="form-group col-md-9"><label>URL the phone opens (XML browser)</label><input class="form-control" id="op-f-url" value="${esc(src.url || '')}" placeholder="http://{pbx}:8080/camera/{ext}">
+						<small class="text-muted"><code>{ext}</code> = the phone's extension, <code>{pbx}</code> = the PBX address the phone provisions from (the tunnel address for VPN phones), <code>{mac}</code> = its MAC. The page must return Yealink XML (e.g. a TextScreen or ImageScreen).</small></div>
+				</div>
+				<div class="form-group"><label>Show the softkey on</label><div>${Object.entries(FEATURE_STATES).map(([k, l]) => `<label class="mr-3"><input type="checkbox" data-f-state="${k}" ${states.includes(k) ? 'checked' : ''}> ${esc(l)}${k === 'on_talk' || k === 'idle' ? '' : ' <span class="text-muted small">(unverified)</span>'}</label>`).join('')}</div></div>
+			</div>
+			<div data-kind="advanced" class="${kind === 'advanced' || builtin ? '' : 'd-none'}">
+				${builtin ? '' : `<div class="form-row">
+					<div class="form-group col-md-4"><label>Needs</label><div>${Object.entries({ edk: 'Enhanced DSS keys (custom softkeys)', xml_browser: 'XML browser' }).map(([k, l]) => `<label class="d-block"><input type="checkbox" data-f-req="${k}" ${(src.requires || []).includes(k) ? 'checked' : ''}> ${esc(l)}</label>`).join('')}</div></div>
+					<div class="form-group col-md-4"><label>Claims</label><div>
+						<label class="d-block"><input type="checkbox" id="op-f-claim-key" ${src.claims && src.claims.lineKey ? 'checked' : ''}> a hidden line key (<code>{lineKey}</code>)</label>
+						<label class="d-block"><input type="checkbox" id="op-f-claim-soft" ${src.claims && src.claims.softkey ? 'checked' : ''}> a softkey number (<code>{softkey}</code>)</label></div></div>
+					<div class="form-group col-md-4"><label>Variables <span class="small text-muted">(become settings; use as <code>{id}</code>)</span></label>
+						${vars.map((v) => `<div class="form-inline mb-1 op-f-var"><input class="form-control form-control-sm mr-1" style="width:7em" data-v="id" placeholder="id" value="${esc(v.id || '')}"><input class="form-control form-control-sm mr-1" style="width:9em" data-v="label" placeholder="label" value="${esc(v.label || '')}"><input class="form-control form-control-sm" style="width:12em" data-v="default" placeholder="default" value="${esc(v.default || '')}"></div>`).join('')}</div>
+				</div>`}
+				<div class="form-row">
+					<div class="form-group col-md-6"><label>Config lines when <b>On</b></label><textarea class="form-control op-mono" rows="9" id="op-f-lines" ${builtin ? 'disabled' : ''}>${esc(builtin ? kvText(f.lines) : src.lines || '')}</textarea></div>
+					<div class="form-group col-md-6"><label>Config lines when <b>Off</b> (removal)</label><textarea class="form-control op-mono" rows="9" id="op-f-remove" ${builtin ? 'disabled' : ''}>${esc(builtin ? kvText(f.remove) : src.remove || '')}</textarea></div>
+				</div>
+				<div class="form-group"><label>Global switches (turned on while the feature is On, never off)</label><textarea class="form-control op-mono" rows="2" id="op-f-globals" ${builtin ? 'disabled' : ''}>${esc(builtin ? kvText(f.globals) : src.globals || '')}</textarea>
+					<small class="text-muted">One <code>key = value</code> per line. Placeholders: <code>{ext}</code> <code>{pbx}</code> <code>{mac}</code> <code>{lineKey}</code> <code>{softkey}</code> and your variables. Off lines matter: a phone keeps settings that are just left out of a later config.</small></div>
+			</div>
+			${!builtin && f ? `<details class="mb-3"><summary>Config this generates</summary><pre class="op-pre">${esc(kvText(f.lines))}\n\n# when Off:\n${esc(kvText(f.remove))}</pre></details>` : ''}
+			${builtin ? '' : `<div class="op-toolbar op-actions"><button class="btn btn-primary" id="op-f-save">Save</button></div>`}`;
+		$('#op-back').onclick = (e) => { e.preventDefault(); features(); };
+		$$('[name="op-f-kind"]').forEach((r) => (r.onchange = () => $$('[data-kind]').forEach((d) => d.classList.toggle('d-none', d.dataset.kind !== r.value))));
+		if (builtin) return;
+		$('#op-f-save').onclick = (e) => guard(e.target, async () => {
+			const k = (document.querySelector('[name="op-f-kind"]:checked') || {}).value || 'softkey_url';
+			const data = { id: $('#op-f-id').value.trim(), name: $('#op-f-name').value.trim(), description: $('#op-f-desc').value.trim(), kind: k, create: isNew };
+			if (k === 'softkey_url') {
+				Object.assign(data, { button_label: $('#op-f-label').value.trim(), url: $('#op-f-url').value.trim(), states: $$('[data-f-state]').filter((c) => c.checked).map((c) => c.dataset.fState) });
+			} else {
+				Object.assign(data, {
+					requires: $$('[data-f-req]').filter((c) => c.checked).map((c) => c.dataset.fReq),
+					claims: { lineKey: $('#op-f-claim-key').checked ? 1 : 0, softkey: $('#op-f-claim-soft').checked ? 1 : 0 },
+					variables: $$('.op-f-var').map((r) => ({ id: r.querySelector('[data-v="id"]').value.trim(), label: r.querySelector('[data-v="label"]').value.trim(), default: r.querySelector('[data-v="default"]').value })).filter((v) => v.id),
+					lines: $('#op-f-lines').value, remove: $('#op-f-remove').value, globals: $('#op-f-globals').value,
+				});
+			}
+			const saved = await api('feature.save', data);
+			await refreshLookups();
+			say(`Saved. Switch "${saved.name}" On in a template or phone (Settings → Add-on features).`);
+			featureEditor(saved);
+		});
 	}
 
 	// ---- files ---------------------------------------------------------------

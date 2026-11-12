@@ -473,12 +473,22 @@ class ConfigBuilder
 				$used[(int) $pos] = true;
 			}
 		}
-		$nextKey = (int) $model['lineKeys'];
-		$nextSoft = 1;
+		// Free line keys from the top (keys the phone really uses are skipped).
+		$free = [];
+		for ($n = (int) $model['lineKeys']; $n >= 1; $n--) {
+			if (!isset($used[$n])) {
+				$free[] = $n;
+			}
+		}
 		$globals = [];
 		foreach ($this->catalog->features($device['brand']) as $id => $f) {
 			$state = (string) ($s["feature.$id"] ?? '');
 			if ($state !== '1' && $state !== '0') {
+				continue;
+			}
+			$slot = (int) ($f['slot'] ?? 0);
+			if ($slot < 1) {
+				$out['warnings'][] = ($f['label'] ?? $id) . ': no feature slot available';
 				continue;
 			}
 			$missing = array_diff($f['requires'], $model['capabilities'] ?? []);
@@ -488,20 +498,18 @@ class ConfigBuilder
 				}
 				continue;
 			}
+			// Slots come from the feature's permanent slot only, so other
+			// features coming and going never move it.
 			$slots = [];
-			for ($i = 0; $i < (int) ($f['claims']['lineKey'] ?? 0); $i++) {
-				while ($nextKey > 0 && isset($used[$nextKey])) {
-					$nextKey--;
-				}
-				if ($nextKey < 1) {
+			if (!empty($f['claims']['lineKey'])) {
+				if (!isset($free[$slot - 1])) {
 					$out['warnings'][] = ($f['label'] ?? $id) . ': no free line key left';
-					continue 2;
+					continue;
 				}
-				$slots['lineKey' . ($i ? $i + 1 : '')] = $nextKey;
-				$used[$nextKey] = true;
+				$slots['lineKey'] = $free[$slot - 1];
 			}
-			for ($i = 0; $i < (int) ($f['claims']['softkey'] ?? 0); $i++) {
-				$slots['softkey' . ($i ? $i + 1 : '')] = $nextSoft++;
+			if (!empty($f['claims']['softkey'])) {
+				$slots['softkey'] = $slot;
 			}
 			$common = ['{ext}' => $ext, '{pbx}' => $pbx, '{mac}' => $device['mac'] ?? ''];
 			$vars = [];

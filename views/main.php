@@ -15,6 +15,7 @@ $web = $info['web'];
 	<ul class="nav nav-tabs" role="tablist">
 		<li class="nav-item"><a class="nav-link active" href="#" data-tab="templates">Templates</a></li>
 		<li class="nav-item"><a class="nav-link" href="#" data-tab="devices">Phones</a></li>
+		<li class="nav-item"><a class="nav-link" href="#" data-tab="features">Features</a></li>
 		<li class="nav-item"><a class="nav-link" href="#" data-tab="assets">Files</a></li>
 		<li class="nav-item"><a class="nav-link" href="#" data-tab="discover">Discover</a></li>
 		<li class="nav-item"><a class="nav-link" href="#" data-tab="events">Activity</a></li>

@@ -226,10 +226,36 @@ class Service
 			$tpl[$t['id']] = $t['name'];
 		}
 		return array_map(function ($d) use ($tpl) {
+			$raw = $d;
 			$d = $this->publicDevice($d);
 			$d['template'] = $d['template_id'] ? ($tpl[$d['template_id']] ?? null) : null;
+			$d['sync'] = $this->syncState($raw);
+			$d['in_sync'] = $d['sync'] === 'current' ? true : ($d['sync'] === 'never' ? null : false);
 			return $d;
 		}, $this->store->devices());
+	}
+
+	/** 'never' (no fetch yet), 'current', 'pending' (notified, not fetched), 'stale' (changed, not notified), 'error'. */
+	private function syncState(array $d): string
+	{
+		if ($d['last_hash'] === '') {
+			return 'never';
+		}
+		try {
+			$hash = $this->builder->render($d)['hash'];
+		} catch (\Throwable $e) {
+			return 'error';
+		}
+		if ($hash === $d['last_hash']) {
+			return 'current';
+		}
+		return $hash === $d['notified_hash'] ? 'pending' : 'stale';
+	}
+
+	/** Phones whose lines include this extension (a user's own phones). */
+	public function devicesForExtension(string $ext): array
+	{
+		return array_values(array_filter($this->listDevices(), fn($d) => in_array($ext, array_column($d['lines'], 'extension'), true)));
 	}
 
 	public function getDevice($ref, bool $reveal = false): array

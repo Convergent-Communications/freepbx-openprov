@@ -86,9 +86,9 @@
 		const [list] = await Promise.all([api('devices.list'), lookups()]);
 		const rows = list.map((d) => {
 			const exts = d.lines.map((l) => esc(l.extension)).join(', ');
-			const state = !d.enabled ? '<span class="badge badge-secondary">disabled</span>'
-				: d.last_seen === 0 ? '<span class="badge badge-warning">never fetched</span>'
-				: d.claimable ? '<span class="badge badge-info">waiting for first fetch with own credentials</span>' : '';
+			const SYNC = { current: ['success', 'up to date'], pending: ['info', 'update sent'], stale: ['warning', 'needs update'], never: ['warning', 'never fetched'], error: ['danger', 'config error'] };
+			const [cls, txt] = SYNC[d.sync] || ['secondary', d.sync || ''];
+			const state = !d.enabled ? '<span class="badge badge-secondary">disabled</span>' : `<span class="badge badge-${cls}">${txt}</span>`;
 			return `<tr>
 				<td><a href="#" data-edit-device="${d.id}">${esc(d.name || d.mac_pretty)}</a></td>
 				<td><code>${esc(d.mac_pretty)}</code></td><td>${esc(d.model)}</td><td>${esc(d.template || '—')}</td>

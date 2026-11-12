@@ -39,6 +39,7 @@ class Api
 			'resync' => '{devices?: [..], extension?, all?: bool, reboot?: bool}',
 			'sync.changed' => '{dryRun?: bool}',
 			'devices.showing' => '{extension}',
+			'devices.forExtension' => '{extension} — phones with this extension on a line (a user\'s own phones)',
 			'assets.list' => '{kind?}',
 			'asset.add' => '{kind, name, path | base64}',
 			'asset.delete' => '{id}',
@@ -99,6 +100,7 @@ class Api
 				return $s->resync((array) $need('devices'), $bool('reboot'));
 			case 'sync.changed': return $s->syncChanged($bool('dryRun'));
 			case 'devices.showing': return array_map(fn($d) => ['id' => $d['id'], 'mac' => $d['mac'], 'name' => $d['name']], $s->devicesShowing((string) $need('extension')));
+			case 'devices.forExtension': return $s->devicesForExtension((string) $need('extension'));
 			case 'assets.list': return $s->listAssets($a['kind'] ?? null);
 			case 'asset.add':
 				if (isset($files['file']['tmp_name']) && is_uploaded_file($files['file']['tmp_name'])) {

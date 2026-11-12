@@ -27,7 +27,7 @@ class Openprov extends Base
 	/** Actions that only read (allowed with read scope). */
 	private const READ_ACTIONS = [
 		'info', 'settings.get', 'models', 'schema', 'keytypes', 'targets', 'extensions', 'vpn.clients',
-		'templates.list', 'template.get', 'devices.list', 'device.get', 'render', 'devices.showing',
+		'templates.list', 'template.get', 'devices.list', 'device.get', 'render', 'devices.showing', 'devices.forExtension',
 		'assets.list', 'events', 'discovered', 'export.csv', 'web.status', 'web.config',
 	];
 
@@ -150,6 +150,7 @@ class Openprov extends Base
 			'lastIp' => ['type' => Type::string(), 'resolve' => fn($d) => $d['last_ip']],
 			'firmware' => ['type' => Type::string(), 'resolve' => fn($d) => $d['last_fw']],
 			'inSync' => ['type' => Type::boolean(), 'resolve' => fn($d) => $d['in_sync'] ?? null],
+			'sync' => ['type' => Type::string(), 'description' => 'never | current | pending | stale | error', 'resolve' => fn($d) => $d['sync'] ?? null],
 			'lineKeys' => ['type' => Type::int(), 'resolve' => fn($d) => $d['line_keys'] ?? null],
 			'settings' => ['type' => Type::string(), 'description' => 'JSON', 'resolve' => fn($d) => json_encode((object) $d['settings'])],
 			'lines' => ['type' => Type::listOf($this->typeContainer->get('openprovline')->getObject()), 'resolve' => fn($d) => $d['lines'] ?? []],

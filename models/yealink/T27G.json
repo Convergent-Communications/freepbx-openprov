@@ -1,0 +1,20 @@
+{
+  "id": "T27G",
+  "brand": "yealink",
+  "name": "Yealink T27G",
+  "ua": [
+    "SIP-T27G"
+  ],
+  "commonFile": "y000000000069.cfg",
+  "accounts": 6,
+  "lineKeys": 21,
+  "expansion": {
+    "modules": 6,
+    "keysPerModule": 40
+  },
+  "wallpaper": null,
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

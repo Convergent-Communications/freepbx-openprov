@@ -1,0 +1,19 @@
+{
+  "id": "T21E2",
+  "brand": "yealink",
+  "name": "Yealink T21E2",
+  "ua": [
+    "SIP-T21E2",
+    "SIP-T21P_E2",
+    "SIP-T21E2"
+  ],
+  "commonFile": "y000000000052.cfg",
+  "accounts": 2,
+  "lineKeys": 2,
+  "expansion": null,
+  "wallpaper": null,
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

@@ -1,0 +1,23 @@
+{
+  "id": "T58V",
+  "brand": "yealink",
+  "name": "Yealink T58V",
+  "ua": [
+    "SIP-T58V"
+  ],
+  "commonFile": null,
+  "accounts": 6,
+  "lineKeys": 29,
+  "expansion": {
+    "modules": 6,
+    "keysPerModule": 40
+  },
+  "wallpaper": {
+    "width": 1024,
+    "height": 600
+  },
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

@@ -1,0 +1,20 @@
+{
+  "id": "T43U",
+  "brand": "yealink",
+  "name": "Yealink T43U",
+  "ua": [
+    "SIP-T43U"
+  ],
+  "commonFile": null,
+  "accounts": 12,
+  "lineKeys": 21,
+  "expansion": {
+    "modules": 3,
+    "keysPerModule": 60
+  },
+  "wallpaper": null,
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

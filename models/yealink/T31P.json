@@ -1,0 +1,17 @@
+{
+  "id": "T31P",
+  "brand": "yealink",
+  "name": "Yealink T31P",
+  "ua": [
+    "SIP-T31P"
+  ],
+  "commonFile": null,
+  "accounts": 2,
+  "lineKeys": 2,
+  "expansion": null,
+  "wallpaper": null,
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

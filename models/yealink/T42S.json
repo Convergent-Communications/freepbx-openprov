@@ -1,0 +1,17 @@
+{
+  "id": "T42S",
+  "brand": "yealink",
+  "name": "Yealink T42S",
+  "ua": [
+    "SIP-T42S"
+  ],
+  "commonFile": null,
+  "accounts": 3,
+  "lineKeys": 15,
+  "expansion": null,
+  "wallpaper": null,
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

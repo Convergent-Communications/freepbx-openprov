@@ -1,0 +1,17 @@
+{
+  "id": "T33G",
+  "brand": "yealink",
+  "name": "Yealink T33G",
+  "ua": [
+    "SIP-T33G"
+  ],
+  "commonFile": null,
+  "accounts": 4,
+  "lineKeys": 12,
+  "expansion": null,
+  "wallpaper": null,
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

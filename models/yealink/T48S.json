@@ -1,0 +1,23 @@
+{
+  "id": "T48S",
+  "brand": "yealink",
+  "name": "Yealink T48S",
+  "ua": [
+    "SIP-T48S"
+  ],
+  "commonFile": "y000000000065.cfg",
+  "accounts": 16,
+  "lineKeys": 29,
+  "expansion": {
+    "modules": 6,
+    "keysPerModule": 40
+  },
+  "wallpaper": {
+    "width": 480,
+    "height": 272
+  },
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

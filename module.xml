@@ -1,0 +1,128 @@
+<module>
+	<rawname>openprov</rawname>
+	<repo>unsupported</repo>
+	<name>OpenProv Phone Provisioning</name>
+	<version>0.1.0</version>
+	<publisher>Convergent</publisher>
+	<license>GPLv3+</license>
+	<licenselink>https://www.gnu.org/licenses/gpl-3.0.txt</licenselink>
+	<category>Connectivity</category>
+	<description>Open-source phone provisioning for FreePBX. Renders Yealink configs on demand over HTTPS with per-device credentials, maps users and feature codes onto line keys, pushes System Admin VPN profiles, wallpapers, ringtones and firmware, and re-syncs phones automatically when their configuration changes. Drivable from the GUI, fwconsole and GraphQL.</description>
+	<more-info>https://github.com/convergent/freepbx-openprov</more-info>
+	<changelog>
+		*0.1.0* Initial release.
+	</changelog>
+	<menuitems>
+		<openprov>OpenProv Provisioning</openprov>
+	</menuitems>
+	<depends>
+		<phpversion>8.1</phpversion>
+		<version>17.0</version>
+		<module>core</module>
+	</depends>
+	<supported>
+		<version>17.0</version>
+	</supported>
+	<console>
+		<command>
+			<name>openprov</name>
+		</command>
+	</console>
+	<database>
+		<table name="openprov_templates">
+			<field name="id" type="integer" primarykey="true" autoincrement="true"/>
+			<field name="name" type="string" length="80"/>
+			<field name="brand" type="string" length="20" default="yealink"/>
+			<field name="parent_id" type="integer" notnull="false"/>
+			<field name="description" type="string" length="255" default=""/>
+			<field name="settings" type="text" notnull="false"/>
+			<field name="raw" type="text" notnull="false"/>
+			<field name="updated_at" type="integer" default="0"/>
+			<key name="name" type="unique">
+				<column name="name"/>
+			</key>
+		</table>
+		<table name="openprov_devices">
+			<field name="id" type="integer" primarykey="true" autoincrement="true"/>
+			<field name="mac" type="string" length="12"/>
+			<field name="brand" type="string" length="20" default="yealink"/>
+			<field name="model" type="string" length="40"/>
+			<field name="template_id" type="integer" notnull="false"/>
+			<field name="name" type="string" length="120" default=""/>
+			<field name="enabled" type="boolean" default="1"/>
+			<field name="settings" type="text" notnull="false"/>
+			<field name="raw" type="text" notnull="false"/>
+			<field name="prov_user" type="string" length="40" default=""/>
+			<field name="prov_pass" type="string" length="64" default=""/>
+			<field name="claimable" type="boolean" default="1"/>
+			<field name="last_seen" type="integer" default="0"/>
+			<field name="last_ip" type="string" length="64" default=""/>
+			<field name="last_ua" type="string" length="255" default=""/>
+			<field name="last_fw" type="string" length="40" default=""/>
+			<field name="last_hash" type="string" length="40" default=""/>
+			<field name="notified_hash" type="string" length="40" default=""/>
+			<field name="updated_at" type="integer" default="0"/>
+			<key name="mac" type="unique">
+				<column name="mac"/>
+			</key>
+		</table>
+		<table name="openprov_lines">
+			<field name="id" type="integer" primarykey="true" autoincrement="true"/>
+			<field name="device_id" type="integer"/>
+			<field name="account" type="integer" default="1"/>
+			<field name="extension" type="string" length="40" default=""/>
+			<field name="label" type="string" length="80" default=""/>
+			<field name="custom" type="text" notnull="false"/>
+			<key name="device_account" type="unique">
+				<column name="device_id"/>
+				<column name="account"/>
+			</key>
+		</table>
+		<table name="openprov_keys">
+			<field name="id" type="integer" primarykey="true" autoincrement="true"/>
+			<field name="scope" type="string" length="10"/>
+			<field name="scope_id" type="integer"/>
+			<field name="bank" type="string" length="10" default="line"/>
+			<field name="position" type="integer"/>
+			<field name="type" type="string" length="30"/>
+			<field name="value" type="string" length="255" default=""/>
+			<field name="label" type="string" length="80" default=""/>
+			<field name="account" type="integer" default="1"/>
+			<field name="extra" type="text" notnull="false"/>
+			<key name="slot" type="unique">
+				<column name="scope"/>
+				<column name="scope_id"/>
+				<column name="bank"/>
+				<column name="position"/>
+			</key>
+		</table>
+		<table name="openprov_assets">
+			<field name="id" type="integer" primarykey="true" autoincrement="true"/>
+			<field name="kind" type="string" length="20"/>
+			<field name="name" type="string" length="120"/>
+			<field name="filename" type="string" length="160"/>
+			<field name="mime" type="string" length="80" default=""/>
+			<field name="size" type="integer" default="0"/>
+			<field name="sha256" type="string" length="64" default=""/>
+			<field name="model" type="string" length="40" default=""/>
+			<field name="version" type="string" length="40" default=""/>
+			<field name="created_at" type="integer" default="0"/>
+		</table>
+		<table name="openprov_events">
+			<field name="id" type="bigint" primarykey="true" autoincrement="true"/>
+			<field name="ts" type="integer"/>
+			<field name="mac" type="string" length="12" default=""/>
+			<field name="ip" type="string" length="64" default=""/>
+			<field name="ua" type="string" length="255" default=""/>
+			<field name="path" type="string" length="255" default=""/>
+			<field name="status" type="integer" default="0"/>
+			<field name="detail" type="string" length="255" default=""/>
+			<key name="ts" type="index">
+				<column name="ts"/>
+			</key>
+			<key name="mac" type="index">
+				<column name="mac"/>
+			</key>
+		</table>
+	</database>
+</module>

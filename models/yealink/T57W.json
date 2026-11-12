@@ -1,0 +1,23 @@
+{
+  "id": "T57W",
+  "brand": "yealink",
+  "name": "Yealink T57W",
+  "ua": [
+    "SIP-T57W"
+  ],
+  "commonFile": "y000000000097.cfg",
+  "accounts": 16,
+  "lineKeys": 29,
+  "expansion": {
+    "modules": 3,
+    "keysPerModule": 60
+  },
+  "wallpaper": {
+    "width": 800,
+    "height": 480
+  },
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

@@ -1,0 +1,23 @@
+{
+  "id": "T54W",
+  "brand": "yealink",
+  "name": "Yealink T54W",
+  "ua": [
+    "SIP-T54W"
+  ],
+  "commonFile": null,
+  "accounts": 16,
+  "lineKeys": 27,
+  "expansion": {
+    "modules": 3,
+    "keysPerModule": 60
+  },
+  "wallpaper": {
+    "width": 480,
+    "height": 272
+  },
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

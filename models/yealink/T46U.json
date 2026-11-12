@@ -1,0 +1,23 @@
+{
+  "id": "T46U",
+  "brand": "yealink",
+  "name": "Yealink T46U",
+  "ua": [
+    "SIP-T46U"
+  ],
+  "commonFile": null,
+  "accounts": 16,
+  "lineKeys": 27,
+  "expansion": {
+    "modules": 3,
+    "keysPerModule": 60
+  },
+  "wallpaper": {
+    "width": 480,
+    "height": 272
+  },
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

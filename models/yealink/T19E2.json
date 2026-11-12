@@ -1,0 +1,18 @@
+{
+  "id": "T19E2",
+  "brand": "yealink",
+  "name": "Yealink T19E2",
+  "ua": [
+    "SIP-T19E2",
+    "SIP-T19P_E2"
+  ],
+  "commonFile": "y000000000053.cfg",
+  "accounts": 1,
+  "lineKeys": 0,
+  "expansion": null,
+  "wallpaper": null,
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

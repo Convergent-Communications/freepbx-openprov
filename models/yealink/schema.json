@@ -1,0 +1,584 @@
+{
+ "brand": "yealink",
+ "settings": [
+  {
+   "id": "prov_network",
+   "label": "Provisioning network",
+   "group": "Provisioning",
+   "type": "select",
+   "default": "internal",
+   "options": [
+    {
+     "value": "internal",
+     "label": "Internal address"
+    },
+    {
+     "value": "external",
+     "label": "External address"
+    },
+    {
+     "value": "vpn",
+     "label": "VPN tunnel address"
+    }
+   ],
+   "computed": true,
+   "help": "Which server address the phone uses for later provisioning requests. 'vpn' keeps provisioning inside the System Admin tunnel."
+  },
+  {
+   "id": "resync_minutes",
+   "label": "Periodic resync (minutes, 0 = off)",
+   "group": "Provisioning",
+   "type": "number",
+   "default": "1440",
+   "computed": true
+  },
+  {
+   "id": "keep_local_changes",
+   "label": "Keep changes made on the phone",
+   "group": "Provisioning",
+   "type": "bool",
+   "default": "0",
+   "keys": {
+    "static.auto_provision.custom.protect": "{value}"
+   },
+   "help": "0 (recommended) = this server is the source of truth; settings edited on the handset or phone web UI are overwritten at the next provisioning. 1 = Yealink keeps those local edits, which then win over everything set here."
+  },
+  {
+   "id": "firmware",
+   "label": "Firmware",
+   "group": "Provisioning",
+   "type": "asset:firmware",
+   "default": "",
+   "computed": true,
+   "help": "Firmware file to install. The phone upgrades when the file's version differs from what it runs."
+  },
+  {
+   "id": "sip_server",
+   "label": "SIP server (blank = PBX address for the provisioning network)",
+   "group": "SIP",
+   "type": "text",
+   "default": "",
+   "computed": true
+  },
+  {
+   "id": "sip_port",
+   "label": "SIP port (blank = PBX PJSIP port)",
+   "group": "SIP",
+   "type": "text",
+   "default": "",
+   "computed": true
+  },
+  {
+   "id": "sip_transport",
+   "label": "SIP transport",
+   "group": "SIP",
+   "type": "select",
+   "default": "0",
+   "options": [
+    {
+     "value": "0",
+     "label": "UDP"
+    },
+    {
+     "value": "1",
+     "label": "TCP"
+    },
+    {
+     "value": "2",
+     "label": "TLS"
+    },
+    {
+     "value": "3",
+     "label": "DNS-NAPTR"
+    }
+   ],
+   "keys": {
+    "account.{account}.sip_server.1.transport_type": "{value}"
+   },
+   "perAccount": true
+  },
+  {
+   "id": "sip_expires",
+   "label": "Registration expiry (seconds)",
+   "group": "SIP",
+   "type": "number",
+   "default": "3600",
+   "keys": {
+    "account.{account}.sip_server.1.expires": "{value}"
+   },
+   "perAccount": true
+  },
+  {
+   "id": "srtp",
+   "label": "SRTP",
+   "group": "SIP",
+   "type": "select",
+   "default": "0",
+   "options": [
+    {
+     "value": "0",
+     "label": "Disabled"
+    },
+    {
+     "value": "1",
+     "label": "Optional"
+    },
+    {
+     "value": "2",
+     "label": "Compulsory"
+    }
+   ],
+   "keys": {
+    "account.{account}.srtp_encryption": "{value}"
+   },
+   "perAccount": true
+  },
+  {
+   "id": "nat_keepalive",
+   "label": "NAT keep-alive",
+   "group": "SIP",
+   "type": "bool",
+   "default": "1",
+   "keys": {
+    "account.{account}.nat.udp_update_enable": "{value}"
+   },
+   "perAccount": true
+  },
+  {
+   "id": "voicemail_number",
+   "label": "Voicemail access number",
+   "group": "SIP",
+   "type": "text",
+   "default": "*97",
+   "keys": {
+    "voice_mail.number.{account}": "{value}"
+   },
+   "perAccount": true
+  },
+  {
+   "id": "blf_presence",
+   "label": "BLF shows offline/unregistered (presence subscribe)",
+   "group": "SIP",
+   "type": "bool",
+   "default": "1",
+   "keys": {
+    "account.{account}.blf.subscribe_event": "{value}"
+   },
+   "perAccount": true,
+   "help": "1 = presence (shows offline), 0 = dialog. Verified on the T87W."
+  },
+  {
+   "id": "timezone",
+   "label": "Time zone",
+   "group": "Time",
+   "type": "timezone",
+   "default": "",
+   "computed": true,
+   "help": "Blank = the PBX time zone."
+  },
+  {
+   "id": "ntp1",
+   "label": "Primary NTP server",
+   "group": "Time",
+   "type": "text",
+   "default": "pool.ntp.org",
+   "keys": {
+    "local_time.ntp_server1": "{value}",
+    "local_time.manual_ntp_srv_prior": "1"
+   }
+  },
+  {
+   "id": "ntp2",
+   "label": "Secondary NTP server",
+   "group": "Time",
+   "type": "text",
+   "default": "",
+   "keys": {
+    "local_time.ntp_server2": "{value}"
+   }
+  },
+  {
+   "id": "time_format",
+   "label": "Clock",
+   "group": "Time",
+   "type": "select",
+   "default": "0",
+   "options": [
+    {
+     "value": "0",
+     "label": "12 hour"
+    },
+    {
+     "value": "1",
+     "label": "24 hour"
+    }
+   ],
+   "keys": {
+    "local_time.time_format": "{value}"
+   }
+  },
+  {
+   "id": "date_format",
+   "label": "Date format",
+   "group": "Time",
+   "type": "select",
+   "default": "0",
+   "options": [
+    {
+     "value": "0",
+     "label": "WWW MMM DD"
+    },
+    {
+     "value": "1",
+     "label": "DD-MMM-YY"
+    },
+    {
+     "value": "2",
+     "label": "YYYY-MM-DD"
+    },
+    {
+     "value": "3",
+     "label": "DD/MM/YYYY"
+    },
+    {
+     "value": "4",
+     "label": "MM/DD/YY"
+    },
+    {
+     "value": "5",
+     "label": "DD MMM YYYY"
+    },
+    {
+     "value": "6",
+     "label": "WWW DD MMM"
+    }
+   ],
+   "keys": {
+    "local_time.date_format": "{value}"
+   }
+  },
+  {
+   "id": "language",
+   "label": "Phone language",
+   "group": "Time",
+   "type": "select",
+   "default": "English",
+   "options": [
+    {
+     "value": "English",
+     "label": "English"
+    },
+    {
+     "value": "French",
+     "label": "French"
+    },
+    {
+     "value": "German",
+     "label": "German"
+    },
+    {
+     "value": "Spanish",
+     "label": "Spanish"
+    },
+    {
+     "value": "Italian",
+     "label": "Italian"
+    },
+    {
+     "value": "Portuguese",
+     "label": "Portuguese"
+    },
+    {
+     "value": "Polish",
+     "label": "Polish"
+    },
+    {
+     "value": "Turkish",
+     "label": "Turkish"
+    },
+    {
+     "value": "Russian",
+     "label": "Russian"
+    },
+    {
+     "value": "Chinese_S",
+     "label": "Chinese_S"
+    }
+   ],
+   "keys": {
+    "lang.gui": "{value}",
+    "lang.wui": "{value}"
+   }
+  },
+  {
+   "id": "wallpaper",
+   "label": "Wallpaper",
+   "group": "Display",
+   "type": "asset:wallpaper",
+   "default": "",
+   "computed": true
+  },
+  {
+   "id": "idle_clock",
+   "label": "Large idle clock",
+   "group": "Display",
+   "type": "bool",
+   "default": "",
+   "keys": {
+    "phone_setting.idle_clock_display.enable": "{value}"
+   },
+   "help": "T5x/T8x firmware. 0 moves time and date into the status bar."
+  },
+  {
+   "id": "backlight_time",
+   "label": "Backlight timeout (seconds, 0 = always on)",
+   "group": "Display",
+   "type": "number",
+   "default": "",
+   "keys": {
+    "phone_setting.backlight_time": "{value}"
+   }
+  },
+  {
+   "id": "screensaver_wait",
+   "label": "Screensaver delay (seconds)",
+   "group": "Display",
+   "type": "number",
+   "default": "",
+   "keys": {
+    "screensaver.wait_time": "{value}"
+   }
+  },
+  {
+   "id": "label_format",
+   "label": "Key label format",
+   "group": "Display",
+   "type": "select",
+   "default": "{name}",
+   "options": [
+    {
+     "value": "{name}",
+     "label": "Full name"
+    },
+    {
+     "value": "{first}",
+     "label": "First name"
+    },
+    {
+     "value": "{first} {last}",
+     "label": "First Last"
+    },
+    {
+     "value": "{ext}",
+     "label": "Extension"
+    },
+    {
+     "value": "{ext} {name}",
+     "label": "Ext + name"
+    },
+    {
+     "value": "{name} {ext}",
+     "label": "Name + ext"
+    }
+   ],
+   "computed": true,
+   "help": "Used for BLF/speed-dial keys without a fixed label; labels follow user display-name changes automatically."
+  },
+  {
+   "id": "account_label_format",
+   "label": "Line label format",
+   "group": "Display",
+   "type": "select",
+   "default": "{ext}",
+   "options": [
+    {
+     "value": "{ext}",
+     "label": "Extension"
+    },
+    {
+     "value": "{name}",
+     "label": "Name"
+    },
+    {
+     "value": "{ext} {name}",
+     "label": "Ext + name"
+    }
+   ],
+   "computed": true
+  },
+  {
+   "id": "ringtone",
+   "label": "Ringtone",
+   "group": "Audio",
+   "type": "asset:ringtone",
+   "default": "",
+   "computed": true
+  },
+  {
+   "id": "call_waiting",
+   "label": "Call waiting",
+   "group": "Features",
+   "type": "bool",
+   "default": "1",
+   "keys": {
+    "call_waiting.enable": "{value}"
+   }
+  },
+  {
+   "id": "intercom_allow",
+   "label": "Allow intercom (auto-answer)",
+   "group": "Features",
+   "type": "bool",
+   "default": "1",
+   "keys": {
+    "features.intercom.allow": "{value}"
+   }
+  },
+  {
+   "id": "intercom_mute",
+   "label": "Mute on intercom answer",
+   "group": "Features",
+   "type": "bool",
+   "default": "0",
+   "keys": {
+    "features.intercom.mute": "{value}"
+   }
+  },
+  {
+   "id": "direct_pickup",
+   "label": "Directed pickup code (BLF pickup)",
+   "group": "Features",
+   "type": "text",
+   "default": "**",
+   "keys": {
+    "features.pickup.direct_pickup_enable": "1",
+    "features.pickup.direct_pickup_code": "{value}"
+   }
+  },
+  {
+   "id": "group_pickup",
+   "label": "Group pickup code",
+   "group": "Features",
+   "type": "text",
+   "default": "*8",
+   "keys": {
+    "features.pickup.group_pickup_enable": "1",
+    "features.pickup.group_pickup_code": "{value}"
+   }
+  },
+  {
+   "id": "manage_keys",
+   "label": "Clear line keys not defined here",
+   "group": "Features",
+   "type": "bool",
+   "default": "1",
+   "computed": true,
+   "help": "When on, every line-key slot the model has is written; unused slots are cleared with %NULL% so keys removed here disappear from the phone."
+  },
+  {
+   "id": "admin_password",
+   "label": "Phone admin password (blank = global)",
+   "group": "Security",
+   "type": "password",
+   "default": "",
+   "computed": true,
+   "help": "Do not use 'admin': recent firmware forces a change-password screen."
+  },
+  {
+   "id": "user_password",
+   "label": "Phone user password (blank = global)",
+   "group": "Security",
+   "type": "password",
+   "default": "",
+   "computed": true
+  },
+  {
+   "id": "web_https_only",
+   "label": "Phone web UI: HTTPS only",
+   "group": "Security",
+   "type": "bool",
+   "default": "0",
+   "keys": {
+    "static.wui.http_enable": "{invert}"
+   }
+  },
+  {
+   "id": "vlan_enable",
+   "label": "Voice VLAN",
+   "group": "Network",
+   "type": "bool",
+   "default": "0",
+   "keys": {
+    "static.network.vlan.internet_port_enable": "{value}"
+   }
+  },
+  {
+   "id": "vlan_id",
+   "label": "Voice VLAN ID",
+   "group": "Network",
+   "type": "number",
+   "default": "",
+   "keys": {
+    "static.network.vlan.internet_port_vid": "{value}"
+   }
+  },
+  {
+   "id": "lldp",
+   "label": "LLDP",
+   "group": "Network",
+   "type": "bool",
+   "default": "1",
+   "keys": {
+    "static.network.lldp.enable": "{value}"
+   }
+  },
+  {
+   "id": "cdp",
+   "label": "CDP",
+   "group": "Network",
+   "type": "bool",
+   "default": "1",
+   "keys": {
+    "static.network.cdp.enable": "{value}"
+   }
+  },
+  {
+   "id": "dscp_voice",
+   "label": "DSCP voice",
+   "group": "Network",
+   "type": "number",
+   "default": "46",
+   "keys": {
+    "static.network.qos.audiotos": "{value}"
+   }
+  },
+  {
+   "id": "dscp_sip",
+   "label": "DSCP SIP",
+   "group": "Network",
+   "type": "number",
+   "default": "26",
+   "keys": {
+    "static.network.qos.signaltos": "{value}"
+   }
+  },
+  {
+   "id": "vpn",
+   "label": "OpenVPN",
+   "group": "VPN",
+   "type": "vpn",
+   "default": "off",
+   "computed": true,
+   "help": "off, auto (the System Admin client linked to the device's first user), or a specific client id."
+  },
+  {
+   "id": "multicast",
+   "label": "Multicast paging listen addresses",
+   "group": "Paging",
+   "type": "textarea",
+   "default": "",
+   "computed": true,
+   "help": "One per line: address:port[,label]. Priority follows line order."
+  }
+ ]
+}

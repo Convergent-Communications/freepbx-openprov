@@ -1,0 +1,17 @@
+{
+  "id": "T40P",
+  "brand": "yealink",
+  "name": "Yealink T40P",
+  "ua": [
+    "SIP-T40P"
+  ],
+  "commonFile": "y000000000054.cfg",
+  "accounts": 3,
+  "lineKeys": 3,
+  "expansion": null,
+  "wallpaper": null,
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

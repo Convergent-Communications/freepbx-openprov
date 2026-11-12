@@ -1,0 +1,23 @@
+{
+  "id": "T58A",
+  "brand": "yealink",
+  "name": "Yealink T58A",
+  "ua": [
+    "SIP-T58A"
+  ],
+  "commonFile": "y000000000058.cfg",
+  "accounts": 16,
+  "lineKeys": 27,
+  "expansion": {
+    "modules": 3,
+    "keysPerModule": 40
+  },
+  "wallpaper": {
+    "width": 1024,
+    "height": 600
+  },
+  "firmwarePrefix": null,
+  "verified": false,
+  "notes": "Key counts from vendor data; not yet verified on hardware.",
+  "defaults": {}
+}

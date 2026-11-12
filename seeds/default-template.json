@@ -1,0 +1,16 @@
+{
+  "name": "Default",
+  "brand": "yealink",
+  "description": "Created on install. Line 1 on key 1; everything else from the settings schema defaults.",
+  "settings": {
+    "prov_network": "internal",
+    "label_format": "{name}",
+    "blf_presence": "1",
+    "manage_keys": "1",
+    "vpn": "off"
+  },
+  "raw": {},
+  "keys": [
+    {"bank": "line", "position": 1, "type": "line", "account": 1}
+  ]
+}

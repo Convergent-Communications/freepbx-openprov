@@ -346,7 +346,8 @@
 		account: +tr.querySelector('[data-k="account"]').value || 1,
 	})).filter((k) => k.type !== '');
 
-	const rawText = (raw) => Object.entries(raw || {}).map(([k, v]) => `${k} = ${v}`).join('\n');
+	// Repeated keys are stored as key#2, key#3…; show them as typed.
+	const rawText = (raw) => Object.entries(raw || {}).map(([k, v]) => `${k.replace(/#\d+$/, '')} = ${v}`).join('\n');
 
 	// ---- device editor -------------------------------------------------------
 	async function deviceEditor(id) {

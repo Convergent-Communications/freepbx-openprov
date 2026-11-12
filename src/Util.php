@@ -70,7 +70,13 @@ final class Util
 			if ($k === '' || !preg_match('/^[A-Za-z0-9_.\-\[\]]+$/', $k)) {
 				continue;
 			}
-			$out[$k] = trim(substr($line, $pos + 1));
+			// A repeated key is kept as "key#2", "key#3"…: Yealink acts on every
+			// line (e.g. several ringtone.url downloads); format() strips the suffix.
+			$key = $k;
+			for ($n = 2; array_key_exists($key, $out); $n++) {
+				$key = "$k#$n";
+			}
+			$out[$key] = trim(substr($line, $pos + 1));
 		}
 		return $out;
 	}

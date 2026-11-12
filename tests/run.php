@@ -234,9 +234,14 @@ $tests['util: label formats'] = function () {
 	eq('Smith', Util::label('{last}', '201', 'Alice Smith'));
 };
 
-$tests['util: raw key parsing ignores junk'] = function () {
+$tests['util: raw key parsing ignores junk and keeps repeated keys'] = function () {
 	$kv = Util::parseKv("# comment\nfoo.bar = 1\n bad line\nx.y=  two words \n;c\nfoo.bar = 2\n");
-	eq(['foo.bar' => '2', 'x.y' => 'two words'], $kv);
+	eq(['foo.bar' => '1', 'x.y' => 'two words', 'foo.bar#2' => '2'], $kv, 'repeats kept, in order');
+	// …and written out as plain repeated lines
+	$w = world();
+	phone($w, ['raw' => "ringtone.url = http://a/1.wav\nringtone.url = http://a/2.wav"]);
+	$text = $w->builder->render($w->store->deviceByMac(MAC))['text'];
+	ok(str_contains($text, "ringtone.url = http://a/1.wav\nringtone.url = http://a/2.wav"), 'both lines rendered');
 };
 
 $tests['util: CIDR allow-list'] = function () {

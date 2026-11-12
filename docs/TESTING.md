@@ -62,3 +62,31 @@ at 192.168.1.246, extension 212.
 2. Find the common config file: check the `y0000000000NN.cfg` the phone requests (OpenProv logs it under Activity).
 3. Confirm check-sync with the VPN on and off (`fwconsole openprov resync devices='["<mac>"]'`).
 4. Confirm `custom.protect = 0` overrides labels that were set on the phone.
+
+## T87W (185.87.0.37) provisioning-key findings, 2026-11-12
+
+Verified through OpenProv over the VPN, by reading the phone's resource lists (`/api/resource/list?type=ringtone|wallpaper`) and its config export. The export lists only non-default values; unknown keys are dropped.
+
+- **Several `ringtone.url` lines in one config** all download in one pass. Raw keys keep repeated keys (stored as `key#2`).
+- **Ringtone numbering:**
+  - Custom ringtones are numbered after the built-ins. The T87W has 15 built-ins (Ring1–13, Silent, Splash), so custom ones start at **16**. On a T57W they start at 11.
+  - They are sorted **alphabetically by file name**, not by order in the config: op8-alpha was downloaded first but listed after op7-zulu.
+  - So adding a file can shift every number.
+- **Distinctive ring:** `distinctive_ring_tones.alert_info.N.ringer` accepts a number or a file reference (`Config:<file>.wav`). The phone's web UI writes the file reference. Use the file reference.
+- **Re-sending a ringtone** the phone already has doesn't duplicate it. Ringtones from earlier configs stay on the phone.
+- **`ringtone.delete = http://localhost/all`** deletes all custom ringtones. Downloads in the same config still happen afterwards.
+- **`wallpaper_delete = http://localhost/all`** has no effect. No wallpaper delete key was found.
+- **Two `wallpaper_upload.url` lines** both download in one pass.
+- **`phone_setting.backgrounds_with_dsskey_unfold = Config:<file>`** is accepted (the wallpaper when the key panel is expanded). `%NULL%` restores the default.
+- **Accepted:**
+  - `transfer.dsskey_deal_type`
+  - `features.missed_call_popup.enable`
+  - `phone_setting.missed_call_power_led_flash.enable`
+  - `phone_setting.custom_softkey_enable`
+  - `account.N.blf.subscribe_period`
+  - `account.N.nat.rport`
+  - `features.factory_pwd_enable` (default 0)
+  - `voice.handfree_send` (−50…50; the web UI says a reboot is needed, and the phone rebooted itself after provisioning)
+  - `account.N.codec.opus.enable/priority` (by codec name, not slot number)
+- **Removing a key from the config does not revert it on the phone.** Send the default explicitly.
+- **After a reboot,** boot-time provisioning raced the tunnel once: status `autoprovision` for about 6 min. A check-sync then fetched within 1 s and returned to idle. On the next reboot, provisioning ran 2 s after the tunnel came up.

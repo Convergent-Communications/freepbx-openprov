@@ -1132,7 +1132,7 @@ class Service
 		$out = [];
 		foreach ($map as $k => $v) {
 			$k = trim((string) $k);
-			if (!preg_match('/^[A-Za-z0-9_.\-\[\]]+$/', $k)) {
+			if (!preg_match('/^[A-Za-z0-9_.\-\[\]]+(#\d+)?$/', $k)) {
 				throw new \InvalidArgumentException("Invalid raw key '$k'");
 			}
 			$out[$k] = Util::cfgValue((string) $v);

@@ -143,6 +143,23 @@ Brands are PHP classes behind a `Brand` interface. Only `Yealink` exists today.
   "provision now" hang when the phone's VPN is on, but work when it's off. See
   D10 for the VPN-specific provisioning URL.
 
+## D8a. Phones with the VPN on are updated by rebooting them through their web API (decided after hardware testing)
+
+- **The problem:** on T87W 185.87.0.37 and .42, once OpenVPN is up, the phone never starts a provisioning request:
+  - not for check-sync (with or without `reboot=true`)
+  - not for its own repeat timer
+  - not for "provision now"
+  - and boot-time provisioning races the tunnel.
+
+  Full report: `YEALINK-VPN-ISSUE.md`.
+- **Chosen:** `vpn_update_method = reboot` (default). `src/PhoneClient.php` logs into the phone's web UI API (RSA-encrypted password, CSRF token) and calls `/api/system/reboot`.
+  - It tries the phone's VPN tunnel address first (from the OpenVPN status file), then its last LAN IP.
+  - It only reboots when the line is idle (AMI `ExtensionState`) and the time is inside `reboot_window`. Otherwise the update is deferred, and the `openprov sync` job retries it every 5 minutes.
+- **Alternatives:**
+  - `none`: changes apply at the next reboot.
+  - `notify`: for firmware that fixes the bug.
+- **Rejected:** pushing config with the phone's import API. Imports are silently ignored while the phone is stuck in `autoprovision`, which is exactly when we'd need them.
+
 ## D9. System Admin VPN
 
 - **Source:** the client certificates and config come straight from System
@@ -167,6 +184,17 @@ picks the host and port written into `auto_provision.server.url`.
   phone then keeps provisioning through the tunnel after the first contact, and
   the provisioning port never has to face the internet. Whether this also
   avoids the check-sync hang with VPN on is recorded in `docs/TESTING.md`.
+
+## D10a. Server config wins over phone-side edits
+
+- **Setting:** `static.auto_provision.custom.protect = 0` is emitted by default (`keep_local_changes = 0`).
+- **Why:** without it, labels edited earlier on the phone or its web UI silently beat the provisioned ones (seen on the T87W). The admin can opt back in per template.
+
+## D10b. Firmware is delivered the same way as everything else
+
+- **Mechanism:** firmware files are uploaded once (they're stored outside the web root) and assigned per template or device. `static.firmware.url` points at an authenticated URL, and the front controller streams the file.
+- **Behaviour on the phone:** it compares the version header and stops reading when it already runs that version (about 1.8 MB read), so there's no upgrade loop.
+- **Tested:** the downgrade from .42 to .37 went through this path.
 
 ## D11. API: one service layer, three front ends
 

@@ -366,8 +366,10 @@
 			const t = fromTpl[p];
 			const hidden = p > 12 && !byPos[p] && !t;
 			const cls = [hidden ? 'op-more' : '', from && byPos[p] ? 'op-override' : '', from && !byPos[p] && t ? 'op-inherited' : ''].join(' ');
-			rows += `<tr data-pos="${p}" class="${cls}">
-				<td class="text-muted">${p}</td>
+			const tplRaw = t ? { type: t.type, value: t.raw_value ?? t.value ?? '', label: t.raw_label ?? t.label ?? '', account: t.account || 1 } : null;
+			const orig = { type: k.type || '', value: k.value || '', label: k.label || '', account: +k.account || 1 };
+			rows += `<tr data-pos="${p}" class="${cls}" data-tpl="${esc(JSON.stringify(tplRaw))}" data-orig="${esc(JSON.stringify(orig))}">
+				<td class="text-muted op-handle" draggable="true" title="Drag to move this key">&#8942;&#8942; ${p}</td>
 				${from ? `<td class="op-tplcol">${esc(describeKey(t))}</td>` : ''}
 				<td><select class="form-control form-control-sm" data-k="type">${keyTypeOptions(k.type, from)}</select></td>
 				<td><input class="form-control form-control-sm" data-k="value" value="${esc(k.value)}" list="op-targets"></td>
@@ -396,7 +398,7 @@
 				? `<span><span class="op-swatch op-swatch-set"></span> Set on this ${isDevice ? 'phone' : 'template'}</span><span><span class="op-swatch op-swatch-inh"></span> Comes from the ${isDevice ? 'template' : 'parent template'}</span>` : ''}<span><span class="op-swatch op-swatch-changed"></span> Changed, not saved yet</span></div>
 			<p class="small text-muted">${inherits
 				? `Keys follow the ${isDevice ? 'template' : 'parent template'} unless you pick something here. `
-				: ''}Fill writes into the grid below (highlighted); nothing is saved until you click Save. Leave a label blank to use the person's current name (renames update phones automatically). <code>{ext}</code> means the phone's own extension (e.g. <code>*21{ext}</code> follow-me toggle).</p>`;
+				: ''}Drag a key by its <b>&#8942;&#8942;</b> number to move it; the keys in between shift. Fill writes into the grid below (highlighted); nothing is saved until you click Save. Leave a label blank to use the person's current name (renames update phones automatically). <code>{ext}</code> means the phone's own extension (e.g. <code>*21{ext}</code> follow-me toggle).</p>`;
 	}
 
 	/** Fill consecutive BLF keys in the grid (line bank), overwriting what is there. Not saved until Save. */
@@ -433,12 +435,97 @@
 		};
 		$('#op-fill-all').onclick = (e) => { e.preventDefault(); fillGrid(cache.extensions.map((x) => x.extension), start(), exclude); };
 		$$('.op-keys select, .op-keys input').forEach((el) => el.addEventListener('change', () => el.closest('tr').classList.add('op-changed')));
+		wireDrag();
 		// Picking a known target fills the type for you.
 		$$('.op-keys [data-k="value"]').forEach((inp) => (inp.onchange = () => {
 			const t = cache.targets.find((x) => x.value === inp.value);
 			const typeSel = inp.closest('tr').querySelector('[data-k="type"]');
 			if (t && (!typeSel.value || typeSel.value === 'none')) typeSel.value = t.type;
 		}));
+	}
+
+	// ---- drag to reorder keys -----------------------------------------------
+	// Moving works on what the phone actually gets (own key, else the inherited
+	// one) and then stores only what differs from the template: a key that ends
+	// up where the template already has it goes back to "Use template", and an
+	// inherited key keeps its automatic label (so renames still flow through).
+	const rowKey = (tr) => ({
+		type: tr.querySelector('[data-k="type"]').value,
+		value: tr.querySelector('[data-k="value"]').value,
+		label: tr.querySelector('[data-k="label"]').value,
+		account: +tr.querySelector('[data-k="account"]').value || 1,
+	});
+	const rowTpl = (tr) => { try { return JSON.parse(tr.dataset.tpl || 'null'); } catch (e) { return null; } };
+	const inherits = (tr) => !!tr.querySelector('.op-tplcol');
+	const isEmpty = (k) => !k || k.type === '' || k.type === 'none';
+	/** What this position shows on the phone. */
+	function effectiveKey(tr) {
+		const own = rowKey(tr);
+		if (own.type === 'none') return { type: '' };
+		if (own.type !== '') return own;
+		const t = inherits(tr) ? rowTpl(tr) : null;
+		return t && t.type !== 'none' ? { ...t } : { type: '' };
+	}
+	const sameKey = (a, b) => (isEmpty(a) && isEmpty(b)) || (!isEmpty(a) && !isEmpty(b) && a.type === b.type && String(a.value) === String(b.value) && String(a.label) === String(b.label) && (a.type !== 'line' || +a.account === +b.account));
+	function setRow(tr, k) {
+		const t = inherits(tr) ? rowTpl(tr) : null;
+		let own;
+		if (t && sameKey(k, t)) own = { type: '', value: '', label: '', account: 1 }; // follows the template again
+		else if (isEmpty(k)) own = { type: t && !isEmpty(t) ? 'none' : '', value: '', label: '', account: 1 };
+		else own = k;
+		tr.querySelector('[data-k="type"]').value = own.type;
+		tr.querySelector('[data-k="value"]').value = own.value ?? '';
+		tr.querySelector('[data-k="label"]').value = own.label ?? '';
+		tr.querySelector('[data-k="account"]').value = own.account || 1;
+		if (inherits(tr)) {
+			tr.classList.toggle('op-override', own.type !== '');
+			tr.classList.toggle('op-inherited', own.type === '' && !!t && !isEmpty(t));
+		}
+		// yellow = differs from what is saved (dragging back clears it)
+		tr.classList.toggle('op-changed', JSON.stringify(rowKey(tr)) !== tr.dataset.orig);
+	}
+	/** Move the key at row index `from` to `to`; the keys in between shift by one. */
+	function moveKey(table, from, to) {
+		const rows = Array.from(table.querySelectorAll('tbody tr'));
+		if (from === to) return;
+		const eff = rows.map(effectiveKey);
+		const [k] = eff.splice(from, 1);
+		eff.splice(to, 0, k);
+		for (let i = Math.min(from, to); i <= Math.max(from, to); i++) {
+			setRow(rows[i], eff[i]);
+			rows[i].classList.add('op-show');
+		}
+		say(`Moved key ${from + 1} to ${to + 1}${Math.abs(to - from) > 1 ? ` (keys ${Math.min(from, to) + 1}–${Math.max(from, to) + 1} shifted)` : ''}. Not saved yet — click Save to apply.`, 'info');
+	}
+	const clearDropMarks = () => $$('.op-drop-above, .op-drop-below').forEach((x) => { x.classList.toggle('op-drop-above', false); x.classList.toggle('op-drop-below', false); });
+	function wireDrag() {
+		let src = null;
+		$$('.op-keys').forEach((table) => {
+			table.querySelectorAll('.op-handle').forEach((h) => {
+				h.addEventListener('dragstart', (e) => {
+					const tr = h.closest('tr');
+					src = { table, index: Array.from(table.querySelectorAll('tbody tr')).indexOf(tr) };
+					tr.classList.add('op-dragging');
+					e.dataTransfer.effectAllowed = 'move';
+					e.dataTransfer.setData('text/plain', String(src.index + 1));
+				});
+				h.addEventListener('dragend', () => { $$('.op-dragging').forEach((x) => x.classList.toggle('op-dragging', false)); clearDropMarks(); src = null; });
+			});
+			table.querySelectorAll('tbody tr').forEach((tr) => {
+				tr.addEventListener('dragover', (e) => {
+					if (!src || src.table !== table) return;
+					e.preventDefault();
+					const idx = Array.from(table.querySelectorAll('tbody tr')).indexOf(tr);
+					clearDropMarks();
+					tr.classList.add(idx > src.index ? 'op-drop-below' : 'op-drop-above');
+				});
+				tr.addEventListener('drop', (e) => {
+					if (!src || src.table !== table) return;
+					e.preventDefault();
+					moveKey(table, src.index, Array.from(table.querySelectorAll('tbody tr')).indexOf(tr));
+				});
+			});
+		});
 	}
 
 	const readKeys = () => $$('.op-keys tbody tr').map((tr) => ({

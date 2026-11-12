@@ -330,7 +330,10 @@ class ConfigBuilder
 						$label = $value;
 					}
 				}
-				$keys[$bank][$pos] = ['type' => $k['type'], 'value' => $value, 'label' => $label, 'account' => $k['account']];
+				// raw_* = as stored (before {ext} and automatic labels), so the
+				// GUI can copy an inherited key without freezing its label.
+				$keys[$bank][$pos] = ['type' => $k['type'], 'value' => $value, 'label' => $label, 'account' => $k['account'],
+					'raw_value' => (string) $k['value'], 'raw_label' => (string) $k['label']];
 			}
 		}
 

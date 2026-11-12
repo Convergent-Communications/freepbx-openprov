@@ -185,6 +185,7 @@ class Service
 		if (isset($in['keys'])) {
 			$this->writeKeys('template', $id, (array) $in['keys'], $in['keysBank'] ?? null);
 		}
+		$this->pruneRedundantKeys();
 		$this->afterChange();
 		return $this->getTemplate($id);
 	}
@@ -392,6 +393,7 @@ class Service
 		if (isset($in['keys'])) {
 			$this->writeKeys('device', $id, (array) $in['keys'], $in['keysBank'] ?? null);
 		}
+		$this->pruneRedundantKeys('device', $id);
 		if ($d['name'] === '' && ($lines = $this->store->lines($id))) {
 			$name = $this->pbx->displayName($lines[0]['extension']);
 			$this->store->saveDevice(['id' => $id, 'name' => trim($lines[0]['extension'] . ' ' . $name)] + $this->store->device($id));
@@ -507,8 +509,59 @@ class Service
 	{
 		$id = $scope === 'template' ? $this->templateRef($ref)['id'] : $this->deviceRef($ref)['id'];
 		$this->writeKeys($scope, $id, $keys, $bank, $replace);
+		$scope === 'device' ? $this->pruneRedundantKeys('device', $id) : $this->pruneRedundantKeys();
 		$this->afterChange();
 		return $this->store->keys($scope, $id);
+	}
+
+	/**
+	 * Drop keys that only repeat what is inherited, so they follow the
+	 * template again: a phone's (or child template's) key identical to the
+	 * template's at that position, or a "blank" where nothing is inherited.
+	 * The phone's effective keys don't change, so nothing is re-sent.
+	 * No arguments = every template and phone (after a template changed).
+	 * Returns the number of keys removed.
+	 */
+	public function pruneRedundantKeys(?string $scope = null, ?int $id = null): int
+	{
+		$targets = [];
+		if ($scope !== null) {
+			$targets[] = [$scope, $id];
+		} else {
+			foreach ($this->store->templates() as $t) {
+				$targets[] = ['template', $t['id']];
+			}
+			foreach ($this->store->devices() as $d) {
+				$targets[] = ['device', $d['id']];
+			}
+		}
+		$removed = 0;
+		foreach ($targets as [$sc, $sid]) {
+			if ($sc === 'device') {
+				$d = $this->store->device($sid);
+				$inherited = $d ? $this->builder->effectiveKeys($d, false) : [];
+			} else {
+				$t = $this->store->template($sid);
+				$pid = $t['parent_id'] ?? null;
+				$inherited = $pid ? $this->builder->effectiveKeys(['id' => 0, 'template_id' => $pid, 'brand' => $t['brand'], 'settings' => []], false) : [];
+			}
+			$own = $this->store->keys($sc, $sid);
+			$keep = [];
+			foreach ($own as $k) {
+				$i = $inherited[$k['bank']][$k['position']] ?? null;
+				$inhEmpty = $i === null || $i['type'] === 'none';
+				$redundant = $k['type'] === 'inherit'
+					|| ($k['type'] === 'none' && $inhEmpty)
+					|| (!$inhEmpty && $k['type'] === $i['type'] && (string) $k['value'] === (string) $i['value']
+						&& (string) $k['label'] === (string) $i['label'] && (int) $k['account'] === (int) $i['account']
+						&& ($k['extra'] ?: null) == ($i['extra'] ?: null));
+				$redundant ? $removed++ : $keep[] = $k;
+			}
+			if (count($keep) !== count($own)) {
+				$this->store->setKeys($sc, $sid, $keep);
+			}
+		}
+		return $removed;
 	}
 
 	/**

@@ -685,6 +685,22 @@ $tests['service: device.sync reports state and requests since a time'] = functio
 	ok(in_array($w->svc->deviceSync(MAC)['sync'], ['stale', 'pending'], true), 'a change shows as not current');
 };
 
+$tests['keys: overrides that match the template are dropped, so the phone follows it again'] = function () {
+	$w = world();
+	phone($w, ['keys' => [['position' => 2, 'type' => 'blf', 'value' => '202'], ['position' => 3, 'type' => 'blf', 'value' => '201', 'label' => 'Front desk'], ['position' => 9, 'type' => 'none']]]);
+	eq([2, 3], array_column($w->store->keys('device', $w->store->deviceByMac(MAC)['id']), 'position'), 'a blank over nothing is dropped on save');
+	// template now has 202 on key 2 (same as the phone) and 201 on 3 (phone has its own label)
+	$w->svc->setKeys('template', 'Base', [['position' => 1, 'type' => 'line', 'account' => 1], ['position' => 2, 'type' => 'blf', 'value' => '202'], ['position' => 3, 'type' => 'blf', 'value' => '201']]);
+	$own = $w->store->keys('device', $w->store->deviceByMac(MAC)['id']);
+	eq([3], array_column($own, 'position'), 'key 2 follows the template; key 3 keeps its own label');
+	// later template changes now reach key 2
+	$w->svc->setKeys('template', 'Base', [['position' => 2, 'type' => 'blf', 'value' => '205']], 'line', false);
+	eq('205', $w->svc->getDevice(MAC)['effective']['keys']['line'][2]['value'] ?? null);
+	// child templates too
+	$w->svc->saveTemplate(['name' => 'Kid', 'parent' => 'Base', 'keys' => [['position' => 2, 'type' => 'blf', 'value' => '205']]]);
+	eq([], $w->store->keys('template', $w->svc->getTemplate('Kid')['id']));
+};
+
 $tests['service: null template and parent are accepted'] = function () {
 	$w = world();
 	$d = $w->svc->saveDevice(['mac' => MAC, 'model' => 'T87W', 'template' => null]);

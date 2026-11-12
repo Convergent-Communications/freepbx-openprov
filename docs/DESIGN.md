@@ -126,6 +126,8 @@ Templates hold two things:
   computed values that must stay correct: account secrets and provisioning
   credentials.
 
+**Keys never pin a copy of the template.** After any save that touches keys or templates, a phone's (or child template's) key identical to the inherited key at that position is removed, so it follows the template again. So is a "blank" with nothing inherited under it. The phone's config doesn't change, so nothing is re-sent. Settings keep explicit values (pinning), since there an explicit default can be intentional.
+
 **In the GUI** every setting and key shows where its value comes from:
 
 - **Grey:** inherited. The field shows the value from the template (for a phone) or from the parent template and defaults (for a template).

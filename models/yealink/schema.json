@@ -458,6 +458,31 @@
    "computed": true
   },
   {
+   "id": "label_length",
+   "label": "Key label length",
+   "group": "Display",
+   "type": "select",
+   "default": "0",
+   "options": [
+    {
+     "value": "0",
+     "label": "Default (short)"
+    },
+    {
+     "value": "1",
+     "label": "Extended"
+    },
+    {
+     "value": "2",
+     "label": "Mid range (some models)"
+    }
+   ],
+   "keys": {
+    "features.config_dsskey_length": "{value}"
+   },
+   "help": "How much of each line-key label the phone shows. Extended shows longer names but fewer keys per page on some models. Mid range exists only on some models; others ignore it."
+  },
+  {
    "id": "ringtone",
    "label": "Ringtone",
    "group": "Audio",

@@ -401,6 +401,25 @@
    }
   },
   {
+   "id": "name_source",
+   "label": "Names on keys come from",
+   "group": "Display",
+   "type": "select",
+   "default": "extension",
+   "computed": true,
+   "options": [
+    {
+     "value": "extension",
+     "label": "Extension display name"
+    },
+    {
+     "value": "user",
+     "label": "User Management (display / first / last name)"
+    }
+   ],
+   "help": "Where key and line labels get people's names. User Management uses the user whose default extension it is: display name for {name}, first and last name for {first}/{last}; anything empty falls back to the extension's display name."
+  },
+  {
    "id": "label_format",
    "label": "Key label format",
    "group": "Display",

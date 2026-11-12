@@ -62,6 +62,14 @@ function throws(callable $fn, string $contains = ''): void
 
 class FakePbx extends Pbx
 {
+	/** User Management users by default extension. */
+	public array $userman = [];
+
+	public function userFor(string $ext): ?array
+	{
+		return $this->userman[$ext] ?? null;
+	}
+
 	public array $users = [
 		'201' => 'Alice Smith',
 		'202' => 'Bob Jones',
@@ -823,6 +831,21 @@ $tests['features: custom softkeys from the GUI keep permanent slots'] = function
 	eq('Hi 212', kv($w->builder->render($w->store->deviceByMac(MAC))['text'])['softkey.4.label']);
 	throws(fn() => $w->svc->saveFeature(['id' => 'bad2', 'name' => 'B', 'kind' => 'advanced', 'lines' => "bad key! = 1"]), 'Invalid config key');
 	ok(count(array_filter($w->catalog->schema('yealink'), fn($s) => $s['id'] === 'feature.dnd_note.text')) === 1, 'variables become settings');
+};
+
+$tests['labels: names from the extension or from User Management'] = function () {
+	$w = world();
+	$w->pbx->userman['201'] = ['uid' => 2, 'username' => 'alice', 'fname' => 'Alicia', 'lname' => 'Smythe', 'displayname' => 'Dr. Alicia Smythe', 'email' => ''];
+	phone($w, ['keys' => [['position' => 2, 'type' => 'blf', 'value' => '201'], ['position' => 3, 'type' => 'blf', 'value' => '202']]]);
+	$cfg = fn() => kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+	eq('Alice', $cfg()['linekey.2.label'], 'default: extension display name ({first} from the Base template)');
+	$w->svc->saveTemplate(['id' => $w->svc->getTemplate('Base')['id'], 'settings' => ['label_format' => '{first}', 'name_source' => 'user']]);
+	eq('Alicia', $cfg()['linekey.2.label'], 'User Management first name');
+	eq('Bob', $cfg()['linekey.3.label'], 'no User Management user: falls back to the extension');
+	$w->svc->saveTemplate(['id' => $w->svc->getTemplate('Base')['id'], 'settings' => ['label_format' => '{name}', 'name_source' => 'user']]);
+	eq('Dr. Alicia Smythe', $cfg()['linekey.2.label']);
+	$w->pbx->userman['201']['displayname'] = '';
+	eq('Alicia Smythe', $cfg()['linekey.2.label'], 'no display name: first + last');
 };
 
 $tests['service: null template and parent are accepted'] = function () {

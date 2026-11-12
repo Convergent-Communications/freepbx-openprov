@@ -11,6 +11,7 @@ use PDO;
 class Pbx
 {
 	private ?array $userCache = null;
+	private ?array $usermanCache = null;
 	private ?array $hintCache = null;
 
 	public function __construct(private PDO $db, private $freepbx = null)
@@ -40,12 +41,63 @@ class Pbx
 	public function forgetCache(): void
 	{
 		$this->userCache = null;
+		$this->usermanCache = null;
 		$this->hintCache = null;
 	}
 
 	public function displayName(string $ext): ?string
 	{
 		return $this->extensions()[$ext]['name'] ?? null;
+	}
+
+	/**
+	 * The User Management user linked to an extension (its default
+	 * extension): ['uid', 'username', 'fname', 'lname', 'displayname', 'email'],
+	 * or null.
+	 */
+	public function userFor(string $ext): ?array
+	{
+		if ($this->usermanCache === null) {
+			$this->usermanCache = [];
+			try {
+				$rows = $this->db->query("SELECT id, username, default_extension, fname, lname, displayname, email FROM userman_users WHERE default_extension IS NOT NULL AND default_extension NOT IN ('', 'none')")->fetchAll(PDO::FETCH_ASSOC);
+			} catch (\Throwable $e) {
+				$rows = []; // no User Management
+			}
+			foreach ($rows as $r) {
+				$this->usermanCache[(string) $r['default_extension']] = [
+					'uid' => (int) $r['id'], 'username' => (string) $r['username'],
+					'fname' => trim((string) $r['fname']), 'lname' => trim((string) $r['lname']),
+					'displayname' => trim((string) $r['displayname']), 'email' => trim((string) $r['email']),
+				];
+			}
+		}
+		return $this->usermanCache[$ext] ?? null;
+	}
+
+	/**
+	 * Name parts for labels: ['name', 'first', 'last'] from the extension's
+	 * display name ('extension') or from User Management ('user': display
+	 * name / first / last name, each falling back to the extension's).
+	 * Null when the extension doesn't exist.
+	 */
+	public function nameParts(string $ext, string $source = 'extension'): ?array
+	{
+		$name = $this->displayName($ext);
+		if ($name === null) {
+			return null;
+		}
+		$words = preg_split('/\s+/', trim($name)) ?: [];
+		$parts = ['name' => trim($name), 'first' => $words[0] ?? '', 'last' => count($words) > 1 ? end($words) : ''];
+		if ($source === 'user' && ($u = $this->userFor($ext))) {
+			$full = trim($u['fname'] . ' ' . $u['lname']);
+			$parts = [
+				'name' => $u['displayname'] !== '' ? $u['displayname'] : ($full !== '' ? $full : $parts['name']),
+				'first' => $u['fname'] !== '' ? $u['fname'] : $parts['first'],
+				'last' => $u['lname'] !== '' ? $u['lname'] : $parts['last'],
+			];
+		}
+		return $parts;
 	}
 
 	/** SIP credentials for a device (extension). */

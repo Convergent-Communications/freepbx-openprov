@@ -98,12 +98,12 @@ final class Util
 	}
 
 	/** Expand a label format: {name} {first} {last} {ext}. */
-	public static function label(string $format, string $ext, string $name): string
+	public static function label(string $format, string $ext, string $name, ?string $first = null, ?string $last = null): string
 	{
 		$name = trim($name);
 		$parts = preg_split('/\s+/', $name) ?: [];
-		$first = $parts[0] ?? '';
-		$last = count($parts) > 1 ? end($parts) : '';
+		$first = $first ?? ($parts[0] ?? '');
+		$last = $last ?? (count($parts) > 1 ? end($parts) : '');
 		$out = strtr($format, [
 			'{name}' => $name !== '' ? $name : $ext,
 			'{first}' => $first !== '' ? $first : $ext,

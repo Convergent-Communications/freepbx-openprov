@@ -236,6 +236,7 @@ class ConfigBuilder
 			throw new \RuntimeException("Unknown model {$device['brand']}/{$device['model']}");
 		}
 		$s = $this->effectiveSettings($device, !$templateOnly);
+		$nameSource = ($s['name_source'] ?? 'extension') === 'user' ? 'user' : 'extension';
 		$lines = $this->store->lines($device['id']);
 		$vpnClient = $this->vpnClient($device, $s, $lines);
 		$network = $s['prov_network'] ?? 'internal';
@@ -291,10 +292,11 @@ class ConfigBuilder
 			if ($primaryExt === '') {
 				$primaryExt = $l['extension'];
 			}
-			$name = (string) ($this->pbx->displayName($l['extension']) ?? '');
+			$np = $this->pbx->nameParts($l['extension'], $nameSource) ?? ['name' => '', 'first' => null, 'last' => null];
+			$name = $np['name'];
 			$accounts[] = [
 				'account' => $l['account'], 'extension' => $l['extension'],
-				'label' => $l['label'] !== '' ? $l['label'] : Util::label($accountFormat, $l['extension'], $name),
+				'label' => $l['label'] !== '' ? $l['label'] : Util::label($accountFormat, $l['extension'], $name, $np['first'], $np['last']),
 				'display_name' => $name !== '' ? $name : $l['extension'],
 				'auth' => $sip['auth'], 'user' => $sip['user'], 'secret' => $sip['secret'],
 				'server' => $sipHost, 'port' => $sipPort, 'custom' => false,
@@ -317,11 +319,11 @@ class ConfigBuilder
 				$value = str_replace('{ext}', $primaryExt, (string) $k['value']);
 				$label = (string) $k['label'];
 				if ($label === '') {
-					$name = $this->pbx->displayName($value);
+					$np = $this->pbx->nameParts($value, $nameSource);
 					if ($k['type'] === 'line') {
 						$label = $accountLabels[$k['account']] ?? '';
-					} elseif ($name !== null) {
-						$label = Util::label($labelFormat, $value, $name);
+					} elseif ($np !== null) {
+						$label = Util::label($labelFormat, $value, $np['name'], $np['first'], $np['last']);
 					} elseif (isset($featureNames[$value])) {
 						$label = $featureNames[$value];
 					} elseif ($k['type'] === 'park_slot') {

@@ -46,6 +46,21 @@ We need remote phones to keep provisioning from our server's **public hostname**
 - `static.auto_provision.attempt_expired_time` set to 10 instead of 20 makes no difference.
 - Changing Settings → Auto Provision → server URL from the web UI while the phone is stuck has no effect until reboot (the value saves but isn't used).
 
+## Ruled out: routing and MTU
+
+- **Routing.** Neither the server nor the client profile pushes routes or `redirect-gateway` (`server 10.8.0.0 255.255.255.0`; the per-client override files are empty). With the VPN up, the phone's own diagnostics (`/api/diagnosis/start`) give:
+  - **Traceroute to 192.168.1.31:** one hop, 2.5 ms.
+  - **Ping:** replies, and the packets arrive on the server's **LAN** interface from 192.168.1.246, not through the tunnel.
+
+  So the route to the server is direct and works.
+- **MTU.** The failing attempts don't send a single packet (not even a TCP SYN or a DNS query), so packet size can't be the cause. 90 KB configs download fine through the tunnel.
+- **On-phone packet capture** (Diagnostics → Pcap, `docs/evidence/t87w-185.87.0.37-autop-lan-ip-vpn-up.pcap`), taken while triggering Auto Provision Now with `http://192.168.1.31:84` at 16:20:55 UTC:
+  - no TCP SYN and no DNS query from the phone to any host
+  - the only traffic to the server is the OpenVPN transport (UDP 1194) and one ARP exchange
+  - the server-side capture on the tunnel interface shows nothing either
+
+  The auto-provisioning task never starts a request.
+
 ## Comparison: SIP-T57W 96.87.0.20
 
 Same OpenProv/FreePBX server, same System Admin OpenVPN server (a different client certificate), VPN connected (10.8.0.3), provisioning URL `https://192.168.1.31:8443` (LAN IP, not the tunnel):

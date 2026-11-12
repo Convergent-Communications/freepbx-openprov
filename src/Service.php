@@ -148,7 +148,7 @@ class Service
 			}
 		}
 		if (array_key_exists('parent', $in) || array_key_exists('parent_id', $in)) {
-			$p = $in['parent'] ?? $in['parent_id'];
+			$p = array_key_exists('parent', $in) ? $in['parent'] : $in['parent_id'];
 			$t['parent_id'] = ($p === null || $p === '' || $p === 0) ? null : $this->templateRef($p)['id'];
 		}
 		if (isset($in['settings'])) {
@@ -312,7 +312,7 @@ class Service
 			throw new \InvalidArgumentException("Unknown model '" . ($d['model'] ?? '') . "' (see: fwconsole openprov models)");
 		}
 		if (array_key_exists('template', $in) || array_key_exists('template_id', $in)) {
-			$ref = $in['template'] ?? $in['template_id'];
+			$ref = array_key_exists('template', $in) ? $in['template'] : $in['template_id'];
 			$d['template_id'] = ($ref === null || $ref === '' || $ref === 0) ? null : $this->templateRef($ref)['id'];
 		} elseif (!$existing && (int) $this->settings->get('default_template_id') > 0) {
 			$d['template_id'] = (int) $this->settings->get('default_template_id');

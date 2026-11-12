@@ -28,6 +28,10 @@ With the VPN enabled and the tunnel up, none of these work:
 - **Server URL on the tunnel address:** the same thing happens when the provisioning URL points at the server's tunnel address (`https://10.8.0.1:8443`). No request is made, and a boot-time fetch fails because the tunnel isn't up yet.
 - **Attempt expiry:** changing `static.auto_provision.attempt_expired_time` (`AutopRetryDelay`) from 20 to 10 makes no difference.
 
+## Control: SIP-T57W on 96.87.0.20 does not have the problem
+
+The same server, the same OpenProv config and the same System Admin OpenVPN server (a different client certificate) were used on 2026-11-12. With the tunnel up (client 10.8.0.3), check-sync made the phone fetch `<mac>.cfg` and the VPN tar within about a second. This was repeated, and "Auto Provision Now" also worked. So the problem is specific to the T8x/185.87.x firmware (seen on both 185.87.0.37 and 185.87.0.42), not to the server or the VPN setup.
+
 ## Expected
 
 Auto provisioning should behave the same with OpenVPN enabled. In particular:

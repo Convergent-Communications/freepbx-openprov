@@ -28,6 +28,12 @@ class Settings
 		'event_retention_days' => 30,
 		'vpn_external_remote' => '',    // "host port" added after the LAN remote in vpn.cnf
 		'default_template_id' => 0,
+		// Yealink 185.x ignores check-sync (and its own repeat timer) while
+		// OpenVPN is up, so VPN phones are updated by rebooting them through
+		// their web API (DESIGN.md D8a). 'reboot' | 'notify' | 'none'.
+		'vpn_update_method' => 'reboot',
+		'reboot_only_when_idle' => true,
+		'reboot_window' => '',          // "HH:MM-HH:MM" (PBX local time); blank = any time
 	];
 
 	/** @var callable */
@@ -82,6 +88,12 @@ class Settings
 		} else {
 			$value = trim((string) $value);
 		}
+		if ($key === 'vpn_update_method' && !in_array($value, ['reboot', 'notify', 'none'], true)) {
+			throw new \InvalidArgumentException('vpn_update_method must be reboot, notify or none');
+		}
+		if ($key === 'reboot_window' && $value !== '' && !preg_match('/^\d{1,2}:\d{2}-\d{1,2}:\d{2}$/', $value)) {
+			throw new \InvalidArgumentException('reboot_window must look like 01:00-05:00');
+		}
 		if ($key === 'phone_scheme' && !in_array($value, ['http', 'https'], true)) {
 			throw new \InvalidArgumentException('phone_scheme must be http or https');
 		}
@@ -106,6 +118,21 @@ class Settings
 		if ($this->get('user_password') === '') {
 			$this->set('user_password', Util::digits(6));
 		}
+	}
+
+	/** Is $now inside reboot_window (handles windows that cross midnight)? */
+	public function inRebootWindow(?int $now = null): bool
+	{
+		$w = (string) $this->get('reboot_window');
+		if ($w === '') {
+			return true;
+		}
+		[$a, $b] = explode('-', $w);
+		$toMin = fn($t) => ((int) explode(':', $t)[0]) * 60 + (int) explode(':', $t)[1];
+		$n = $toMin(date('H:i', $now ?? time()));
+		$s = $toMin($a);
+		$e = $toMin($b);
+		return $s <= $e ? ($n >= $s && $n < $e) : ($n >= $s || $n < $e);
 	}
 
 	public function allowedNetworks(): array

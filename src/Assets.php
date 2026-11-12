@@ -29,7 +29,17 @@ class Assets
 		foreach (['', '/files', '/cache'] as $sub) {
 			if (!is_dir($this->dir . $sub)) {
 				@mkdir($this->dir . $sub, 0750, true);
+				self::own($this->dir . $sub);
 			}
+		}
+	}
+
+	/** Files written by root (fwconsole) must stay readable by the web server user. */
+	public static function own(string $path): void
+	{
+		if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
+			@chown($path, 'asterisk');
+			@chgrp($path, 'asterisk');
 		}
 	}
 
@@ -66,6 +76,7 @@ class Assets
 			throw new \RuntimeException("Could not write $dest");
 		}
 		@chmod($dest, 0640);
+		self::own($dest);
 		$version = $meta['version'] ?? '';
 		if ($kind === 'firmware' && $version === '' && preg_match('/(\d+\.\d+\.\d+\.\d+)/', $name, $m)) {
 			$version = $m[1];
@@ -133,6 +144,7 @@ class Assets
 		imagecopyresampled($out, $img, 0, 0, $sx, $sy, $w, $h, $cw, $ch);
 		$this->ensureDir();
 		imagejpeg($out, $cache, 90);
+		self::own($cache);
 		return is_file($cache) ? $cache : $src;
 	}
 

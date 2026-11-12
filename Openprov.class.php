@@ -115,6 +115,11 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 				}
 			}
 		}
+		try {
+			\FreePBX::Job()->addClass('openprov', 'sync', \FreePBX\modules\Openprov\Job::class, '*/5 * * * *');
+		} catch (\Throwable $e) {
+			out('OpenProv: could not register the sync job: ' . $e->getMessage());
+		}
 		if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
 			[$ok, $msg] = $p['web']->install();
 			out('OpenProv web server: ' . $msg);
@@ -125,6 +130,10 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 
 	public function uninstall()
 	{
+		try {
+			\FreePBX::Job()->removeAll('openprov');
+		} catch (\Throwable $e) {
+		}
 		if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
 			$this->parts()['web']->uninstall();
 		}

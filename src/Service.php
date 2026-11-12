@@ -503,17 +503,99 @@ class Service
 		}
 		$out = [];
 		foreach ($devices as $d) {
-			$ep = $this->endpointFor($d);
-			$res = $ep === null ? ['ok' => false, 'message' => 'no local account to notify'] : $this->notifier->notify($ep, Notifier::eventFor($d['brand'], $reboot ? 'reboot' : 'sync'));
+			$res = $this->pushUpdate($d, $reboot, true);
 			if ($res['ok']) {
 				try {
 					$this->store->touchDevice($d['id'], ['notified_hash' => $this->builder->render($d)['hash']]);
 				} catch (\Throwable $e) {
 				}
 			}
-			$out[] = ['device' => $d['id'], 'mac' => $d['mac'], 'endpoint' => $ep] + $res;
+			$out[] = ['device' => $d['id'], 'mac' => $d['mac']] + $res;
 		}
 		return $out;
+	}
+
+	/**
+	 * Make a phone pick up its new configuration.
+	 * - Normal phones: SIP NOTIFY check-sync (reboot=true when $reboot).
+	 * - Phones with OpenVPN on: Yealink 185.x ignores check-sync while the
+	 *   tunnel is up, so (vpn_update_method=reboot) reboot through the phone's
+	 *   web API, only when the line is idle and inside reboot_window unless
+	 *   $manual. Returns ok/deferred/method/message.
+	 */
+	public function pushUpdate(array $d, bool $reboot = false, bool $manual = false): array
+	{
+		$ep = $this->endpointFor($d);
+		$vpnClient = null;
+		try {
+			$vpnClient = $this->builder->context($d)['vpn_client'];
+		} catch (\Throwable $e) {
+		}
+		$method = $this->settings->get('vpn_update_method');
+		if ($vpnClient !== null && $method !== 'notify') {
+			if ($method === 'none') {
+				return ['ok' => false, 'deferred' => false, 'method' => 'none', 'endpoint' => $ep, 'message' => 'VPN phone: automatic updates disabled (applies at next reboot)'];
+			}
+			if (!$manual && !$this->settings->inRebootWindow()) {
+				return ['ok' => false, 'deferred' => true, 'method' => 'phone-api-reboot', 'endpoint' => $ep, 'message' => 'outside reboot window'];
+			}
+			if ($this->settings->get('reboot_only_when_idle') && $ep !== null && $this->endpointBusy($ep)) {
+				return ['ok' => false, 'deferred' => true, 'method' => 'phone-api-reboot', 'endpoint' => $ep, 'message' => 'line in use; will retry'];
+			}
+			$res = $this->rebootViaApi($d, $vpnClient);
+			$this->store->logEvent(['mac' => $d['mac'], 'ip' => $res['host'] ?? '', 'path' => '(push) reboot via phone API', 'status' => $res['ok'] ? 200 : 502, 'detail' => $res['message']]);
+			return $res + ['deferred' => !$res['ok'], 'method' => 'phone-api-reboot', 'endpoint' => $ep];
+		}
+		if ($ep === null) {
+			return ['ok' => false, 'deferred' => false, 'method' => 'notify', 'endpoint' => null, 'message' => 'no local account to notify'];
+		}
+		$res = $this->notifier->notify($ep, Notifier::eventFor($d['brand'], $reboot ? 'reboot' : 'sync'));
+		return $res + ['deferred' => false, 'method' => 'notify', 'endpoint' => $ep];
+	}
+
+	private function endpointBusy(string $ext): bool
+	{
+		global $astman;
+		if (!isset($astman) || !$astman || !method_exists($astman, 'ExtensionState')) {
+			return false;
+		}
+		$r = $astman->ExtensionState($ext, 'ext-local');
+		$status = (int) ($r['Status'] ?? 0);
+		return $status > 0 && $status !== 4 && ($status & (1 | 2 | 8 | 16)) !== 0;
+	}
+
+	/** Reboot through the phone's web API; tries the VPN tunnel address, then the last seen IP. */
+	public function rebootViaApi(array $d, ?int $vpnClient = null): array
+	{
+		$hosts = [];
+		if ($vpnClient !== null) {
+			$c = $this->vpn->connectedClients()[$vpnClient] ?? null;
+			if ($c && $c['address'] !== '') {
+				$hosts[] = $c['address'];
+			}
+		}
+		if ($d['last_ip'] !== '') {
+			$hosts[] = $d['last_ip'];
+		}
+		$hosts = array_values(array_unique($hosts));
+		if (!$hosts) {
+			return ['ok' => false, 'message' => 'no known address for the phone'];
+		}
+		$ctx = $this->builder->context($d);
+		$err = [];
+		foreach ($hosts as $h) {
+			try {
+				$pc = new PhoneClient($h, $ctx['passwords']['admin']);
+				$pc->login();
+				if ($pc->reboot()) {
+					return ['ok' => true, 'host' => $h, 'message' => "rebooting via $h"];
+				}
+				$err[] = "$h: reboot refused";
+			} catch (\Throwable $e) {
+				$err[] = $e->getMessage();
+			}
+		}
+		return ['ok' => false, 'host' => $hosts[0], 'message' => implode('; ', $err)];
 	}
 
 	/** Devices whose config shows an extension: as a line or on a key. */
@@ -568,12 +650,13 @@ class Service
 				$out[] = ['device' => $d['id'], 'mac' => $d['mac'], 'ok' => true, 'message' => 'would notify'];
 				continue;
 			}
-			$ep = $this->endpointFor($d);
-			$res = $ep === null ? ['ok' => false, 'message' => 'no local account'] : $this->notifier->notify($ep, Notifier::eventFor($d['brand'], 'sync'));
-			if ($res['ok']) {
+			$res = $this->pushUpdate($d);
+			if ($res['ok'] || !$res['deferred']) {
+				// Deferred pushes (busy line, outside window, phone unreachable)
+				// stay pending and are retried by the OpenProv job.
 				$this->store->touchDevice($d['id'], ['notified_hash' => $hash]);
 			}
-			$out[] = ['device' => $d['id'], 'mac' => $d['mac'], 'endpoint' => $ep] + $res;
+			$out[] = ['device' => $d['id'], 'mac' => $d['mac']] + $res;
 		}
 		return $out;
 	}

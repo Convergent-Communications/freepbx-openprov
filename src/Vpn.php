@@ -42,6 +42,24 @@ class Vpn
 		return $out;
 	}
 
+	/**
+	 * Connected clients from the OpenVPN status file (status-version 3):
+	 * client id => ['address' => tunnel IP, 'real' => ip:port, 'since' => ts].
+	 */
+	public function connectedClients(): array
+	{
+		$out = [];
+		foreach (glob($this->dir . '/sysadmin_server*-status.log') ?: [] as $file) {
+			foreach (@file($file, FILE_IGNORE_NEW_LINES) ?: [] as $line) {
+				$f = explode("\t", $line);
+				if (($f[0] ?? '') === 'CLIENT_LIST' && preg_match('/^client(\d+)$/', $f[1] ?? '', $m)) {
+					$out[(int) $m[1]] = ['address' => $f[3] ?? '', 'real' => $f[2] ?? '', 'since' => (int) ($f[8] ?? 0)];
+				}
+			}
+		}
+		return $out;
+	}
+
 	/** Tunnel address of the server (first host of vpnserver_range). */
 	public function serverTunnelAddress(): ?string
 	{

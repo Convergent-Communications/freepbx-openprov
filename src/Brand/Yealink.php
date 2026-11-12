@@ -186,7 +186,7 @@ class Yealink implements Brand
 		// VPN
 		$b['static.network.vpn_enable'] = !empty($ctx['urls']['vpn']) ? '1' : '0';
 		if (!empty($ctx['urls']['vpn'])) {
-			$b['static.openvpn.url'] = $ctx['urls']['vpn'];
+			$b['openvpn.url'] = $ctx['urls']['vpn'];
 		}
 
 		// Multicast paging (Yealink supports 10 listen addresses)

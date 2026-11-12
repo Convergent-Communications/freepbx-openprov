@@ -38,6 +38,11 @@ foreach ($res['headers'] as $k => $v) {
 	header("$k: $v");
 }
 if (isset($res['file'])) {
+	// Stream large files (firmware is ~40-90 MB) instead of buffering them.
+	while (ob_get_level() > 0) {
+		ob_end_clean();
+	}
+	@set_time_limit(0);
 	readfile($res['file']);
 } else {
 	echo $res['body'];

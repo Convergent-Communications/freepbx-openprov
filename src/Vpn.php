@@ -70,6 +70,24 @@ class Vpn
 		return $m[1] . '.1';
 	}
 
+	/** The tunnel subnet as [network, prefix], from vpnserver_range ("10.8.0.0/255.255.255.0"). */
+	public function tunnelNetwork(): ?array
+	{
+		$range = (string) $this->option('vpnserver_range');
+		if (!preg_match('#^(\d+\.\d+\.\d+\.\d+)/(\d+\.\d+\.\d+\.\d+|\d{1,2})$#', $range, $m)) {
+			return null;
+		}
+		$prefix = str_contains($m[2], '.') ? strlen(str_replace('0', '', decbin(ip2long($m[2])))) : (int) $m[2];
+		return [$m[1], $prefix];
+	}
+
+	/** Did a request from $ip come through the VPN tunnel? */
+	public function isTunnelAddress(string $ip): bool
+	{
+		$n = $this->tunnelNetwork();
+		return $n !== null && $ip !== '' && Util::ipAllowed($ip, [$n[0] . '/' . $n[1]]);
+	}
+
 	public function port(): int
 	{
 		return (int) ($this->option('vpnserver_port') ?: 1194);

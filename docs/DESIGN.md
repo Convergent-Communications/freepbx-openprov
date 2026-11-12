@@ -185,22 +185,24 @@ Brands are PHP classes behind a `Brand` interface. Only `Yealink` exists today.
   "provision now" hang when the phone's VPN is on, but work when it's off. See
   D10 for the VPN-specific provisioning URL.
 
-## D8a. Phones with the VPN on are updated by rebooting them through their web API (decided after hardware testing)
+## D8a. Tunnel-bound phones provision through the tunnel (revised 2026-11-12 after hardware testing)
 
-- **The problem:** on T87W 185.87.0.37 and .42, once OpenVPN is up, the phone never starts a provisioning request:
-  - not for check-sync (with or without `reboot=true`)
-  - not for its own repeat timer
-  - not for "provision now"
-  - and boot-time provisioning races the tunnel.
-
-  Full report: `YEALINK-VPN-ISSUE.md`.
-- **Chosen:** `vpn_update_method = reboot` (default). `src/PhoneClient.php` logs into the phone's web UI API (RSA-encrypted password, CSRF token) and calls `/api/system/reboot`.
-  - It tries the phone's VPN tunnel address first (from the OpenVPN status file), then its last LAN IP.
-  - It only reboots when the line is idle (AMI `ExtensionState`) and the time is inside `reboot_window`. Otherwise the update is deferred, and the `openprov sync` job retries it every 5 minutes.
-- **Alternatives:**
+- **The problem:** on T87W 185.87.0.37 and .42, while OpenVPN is up, the provisioning downloader binds to `tun0` ("durl use network interface tun0"). A provisioning server at the VPN endpoint's own address is never contacted, and the task sits in `autoprovision` retrying until reboot. Addresses reached through the tunnel work, including check-sync. Full report: `YEALINK-VPN-ISSUE.md`.
+- **Chosen:** models with `quirks.vpnBlocksProvisioning` (T87W) that have a VPN client always use the `vpn` provisioning network:
+  - `auto_provision.server.url` and the SIP server use `vpn_provisioning_host`, or the server's tunnel address (10.8.0.1) when that's blank.
+  - Wallpaper, ringtone, firmware and the VPN profile (`openvpn.url`) use a direct address (external, else internal) **until the phone's requests arrive from the VPN subnet**. After that they use the tunnel too, because a tunnel-bound phone can't reach anything else. The decision uses the request's source IP, or the device's `last_ip` for sync checks, so the hash the phone fetched matches what `sync.changed` renders.
+  - `vpn_update_method = auto` now means check-sync for every model. Tested on the T87W (2026-11-12): fetch within 1–2 s over the tunnel, status back to idle.
+- **Bring-up, tested on a factory-reset T87W:**
+  1. Bootstrap over the LAN.
+  2. The phone gets the VPN profile over the LAN and connects. No reboot was needed.
+  3. It re-provisions from 10.8.0.2 about 4 s later, and SIP registers through the tunnel.
+- **Still available:**
+  - `reboot`: reboots through the phone's web API, with an idle check and `reboot_window`.
   - `none`: changes apply at the next reboot.
-  - `notify`: for firmware that fixes the bug.
-- **Rejected:** pushing config with the phone's import API. Imports are silently ignored while the phone is stuck in `autoprovision`, which is exactly when we'd need them.
+- **Risk: a broken VPN strands the phone.** If the tunnel can't come up (a revoked or regenerated client cert, or a VPN server change), a tunnel-bound phone's provisioning URL is unreachable. It can't be fixed remotely. Recovery is DHCP option 66, RPS or a factory reset. Mitigations:
+  - Regenerate VPN clients only after the phones have fetched the new profile.
+  - Set `vpn_provisioning_host` to a DNS name. It must still resolve to an address reached through the tunnel (not the endpoint IP), but it can be repointed later.
+- **Rejected:** pushing config with the phone's import API. Imports are silently ignored while the phone is stuck in `autoprovision`.
 
 ## D9. System Admin VPN
 
@@ -222,10 +224,14 @@ Brands are PHP classes behind a `Brand` interface. Only `Yealink` exists today.
 A device has a *provisioning network*: `internal`, `external` or `vpn`. It
 picks the host and port written into `auto_provision.server.url`.
 
-- **`vpn`** uses the VPN server's tunnel address (for example 10.8.0.1). The
-  phone then keeps provisioning through the tunnel after the first contact, and
-  the provisioning port never has to face the internet. Whether this also
-  avoids the check-sync hang with VPN on is recorded in `docs/TESTING.md`.
+- **`vpn`** uses `vpn_provisioning_host`, or the VPN server's tunnel address
+  (for example 10.8.0.1). The phone keeps provisioning through the tunnel after
+  first contact, and the provisioning port never has to face the internet.
+  Tunnel-bound models are forced onto this network (D8a).
+- **Firewall:** install registers a FreePBX firewall custom service, "OpenProv
+  provisioning" (the HTTPS and HTTP ports), in the zones from `firewall_zones`
+  (default internal and other; `tun0` is Internal). Changing the ports or
+  zones in Settings updates it.
 
 ## D10a. Server config wins over phone-side edits
 

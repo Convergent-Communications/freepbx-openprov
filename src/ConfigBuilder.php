@@ -150,6 +150,10 @@ class ConfigBuilder
 	public function hostFor(string $network): string
 	{
 		if ($network === 'vpn') {
+			$h = trim((string) $this->settings->get('vpn_provisioning_host'));
+			if ($h !== '') {
+				return $h;
+			}
 			$t = $this->vpn->serverTunnelAddress();
 			if ($t) {
 				return $t;
@@ -203,7 +207,7 @@ class ConfigBuilder
 	 * (no device settings or keys) — used to show "template value vs this
 	 * phone" in editors.
 	 */
-	public function context(array $device, bool $templateOnly = false): array
+	public function context(array $device, bool $templateOnly = false, ?string $requestIp = null): array
 	{
 		$model = $this->catalog->model($device['brand'], $device['model']);
 		if (!$model) {
@@ -213,11 +217,27 @@ class ConfigBuilder
 		$lines = $this->store->lines($device['id']);
 		$vpnClient = $this->vpnClient($device, $s, $lines);
 		$network = $s['prov_network'] ?? 'internal';
+		// Models whose provisioning downloader is bound to the VPN interface
+		// while the tunnel is up (T87W 185.87.x: "durl use network interface
+		// tun0") can only provision from an address reached through the
+		// tunnel, so they always use the VPN network once they have a client.
+		$tunnelBound = !empty($model['quirks']['vpnBlocksProvisioning']);
+		if ($vpnClient !== null && $tunnelBound) {
+			$network = 'vpn';
+		}
 		if ($network === 'vpn' && $vpnClient === null) {
 			$network = 'internal';
 		}
 		// Phones reach these before the tunnel is up, so use a direct address.
 		$directNetwork = $network === 'vpn' ? ($this->settings->get('external_host') !== '' ? 'external' : 'internal') : $network;
+		// Is the phone already on its tunnel? (the request came from the VPN
+		// subnet, or — when rendering for sync checks — it last did.)
+		$seenIp = $requestIp ?? (string) ($device['last_ip'] ?? '');
+		$onTunnel = $vpnClient !== null && $this->vpn->isTunnelAddress($seenIp);
+		// Files and the VPN profile: through the tunnel once the phone is on
+		// it (a tunnel-bound phone can't fetch anything else then); otherwise
+		// a direct address, as on first contact the tunnel doesn't exist yet.
+		$fileNetwork = ($network === 'vpn' && !$onTunnel) ? $directNetwork : $network;
 		$creds = ['user' => $device['prov_user'], 'pass' => $device['prov_pass']];
 
 		$sipHost = trim((string) ($s['sip_server'] ?? '')) ?: $this->hostFor($network);
@@ -294,7 +314,7 @@ class ConfigBuilder
 
 		// Assets
 		$urls = ['prov' => $this->baseUrl($network)];
-		$assetBase = $this->baseUrl($network, $creds);
+		$assetBase = $this->baseUrl($fileNetwork, $creds);
 		if (($s['wallpaper'] ?? '') !== '' && ($a = $this->store->asset((int) $s['wallpaper'])) && $a['kind'] === 'wallpaper') {
 			$name = Assets::phoneFileName($a, $model['wallpaper'] ? 'jpg' : '');
 			$urls['wallpaper'] = "$assetBase/a/wallpaper/{$a['id']}/" . rawurlencode($device['model']) . "/$name";
@@ -309,7 +329,7 @@ class ConfigBuilder
 			$urls['firmware'] = "$assetBase/a/firmware/{$a['id']}/" . rawurlencode($a['name']);
 		}
 		if ($vpnClient !== null) {
-			$urls['vpn'] = $this->baseUrl($directNetwork, $creds) . '/' . $device['mac'] . '-vpn.tar';
+			$urls['vpn'] = $this->baseUrl($onTunnel ? $network : $directNetwork, $creds) . '/' . $device['mac'] . '-vpn.tar';
 		}
 
 		$multicast = [];
@@ -327,6 +347,8 @@ class ConfigBuilder
 			'model' => $model,
 			'settings' => $s,
 			'network' => $network,
+			'on_tunnel' => $onTunnel,
+			'tunnel_bound' => $tunnelBound,
 			'accounts' => $accounts,
 			'primary_extension' => $primaryExt,
 			'keys' => $keys,
@@ -373,9 +395,9 @@ class ConfigBuilder
 	}
 
 	/** Full render: ['text' => cfg, 'hash' => sha1, 'context' => ctx]. */
-	public function render(array $device): array
+	public function render(array $device, ?string $requestIp = null): array
 	{
-		$ctx = $this->context($device);
+		$ctx = $this->context($device, false, $requestIp);
 		$brand = $this->brand($device['brand']);
 		$compiled = $brand->compile($ctx);
 		$kv = array_merge(

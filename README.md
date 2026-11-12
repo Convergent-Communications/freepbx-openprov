@@ -11,7 +11,7 @@ built to be driven by people (GUI) and by software (CLI and GraphQL).
 - **Layered templates:** parent template → template → phone. Data-driven settings, plus raw `key = value` lines for everything else.
 - **System Admin VPN:** OpenVPN profiles built from System Admin's clients.
 - **Files:** wallpapers (resized per model), ringtones, firmware.
-- **Automatic updates.** Phones update via SIP check-sync, or a safe web-API reboot for VPN phones (see `docs/YEALINK-VPN-ISSUE.md`).
+- **Automatic updates.** Phones update via SIP check-sync, including over the VPN. Tunnel-bound models (T87W) provision through the tunnel (see `docs/YEALINK-VPN-ISSUE.md`). A web-API reboot is available as an option.
 - **EPM import:** migrates EPM's extension mappings.
 
 ## Install
@@ -23,7 +23,7 @@ fwconsole ma install openprov        # as root: also installs the HTTPS vhost (p
 ```
 
 - **Install as a non-root user?** Run `fwconsole openprov web --install` as root afterwards.
-- **FreePBX firewall:** if it's enabled, add TCP 8443 as a custom service (Connectivity → Firewall → Services) and enable it for every zone phones provision from, including the zone of the VPN interface (`tun0`, Internal by default). Otherwise VPN phones can't reach OpenProv.
+- **FreePBX firewall:** installing adds a custom service, "OpenProv provisioning" (TCP 8443), to the zones in the `firewall_zones` setting (default internal and other; the VPN interface `tun0` is Internal). Add `external` only if phones provision over the internet without the VPN.
 
 ## Bring a phone online
 

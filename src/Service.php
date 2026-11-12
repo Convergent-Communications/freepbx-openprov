@@ -55,11 +55,20 @@ class Service
 
 	public function setSettings(array $values): array
 	{
+		$fwKeys = ['https_port', 'http_port', 'firewall_zones'];
+		$fwBefore = array_map(fn ($k) => $this->settings->get($k), $fwKeys);
 		foreach ($values as $k => $v) {
 			if ($k === 'internal_host_effective' || $v === '********') {
 				continue;
 			}
 			$this->settings->set($k, $v);
+		}
+		if (array_map(fn ($k) => $this->settings->get($k), $fwKeys) !== $fwBefore) {
+			try {
+				$this->web->ensureFirewall();
+			} catch (\Throwable $e) {
+				// firewall module absent or refused; the README covers the manual step
+			}
 		}
 		$this->afterChange();
 		return $this->getSettings();
@@ -566,11 +575,11 @@ class Service
 		}
 		$method = $this->settings->get('vpn_update_method');
 		if ($method === 'auto') {
-			// Only models known to ignore check-sync while their VPN is up
-			// (models/*.json quirks.vpnBlocksProvisioning; the T87W on 185.87.x)
-			// are rebooted. The T57W (96.87.0.20) re-syncs fine over the VPN.
-			$model = $this->catalog->model($d['brand'], $d['model']);
-			$method = !empty($model['quirks']['vpnBlocksProvisioning']) ? 'reboot' : 'notify';
+			// check-sync works for every phone as long as its provisioning URL
+			// is reachable the way the phone sends it: tunnel-bound models (T87W
+			// 185.87.x) are given the tunnel address (ConfigBuilder), so they
+			// re-sync over the VPN like the rest. 'reboot' remains a manual choice.
+			$method = 'notify';
 		}
 		if ($vpnClient !== null && $method !== 'notify') {
 			if ($method === 'none') {

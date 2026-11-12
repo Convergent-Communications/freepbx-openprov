@@ -548,7 +548,9 @@
 		event_retention_days: 'Days of activity to keep.',
 		vpn_external_remote: '"host port" added after the LAN address in VPN profiles, for off-site phones.',
 		default_template_id: 'Template for new phones.',
-		vpn_update_method: 'Phones with the VPN on. auto = reboot only models known to ignore update requests over the VPN (T87W on 185.87.x), check-sync for the rest; reboot = always reboot VPN phones through their web API; notify = always check-sync; none = changes apply at the next reboot.',
+		vpn_update_method: 'Phones with the VPN on. auto / notify = check-sync (works for every model now that tunnel-bound phones provision through the tunnel); reboot = reboot VPN phones through their web API; none = changes apply at the next reboot.',
+		vpn_provisioning_host: 'Address VPN phones on tunnel-bound models (T87W on 185.87.x) provision from once their tunnel is up. Blank = the VPN server\'s tunnel address (e.g. 10.8.0.1). Never the VPN endpoint address: those phones can\'t reach it while connected.',
+		firewall_zones: 'FreePBX firewall zones the provisioning port is opened in (custom service "OpenProv provisioning"). VPN phones arrive in the zone of tun0 (Internal by default). Comma-separated: trusted, internal, other, external.',
 		reboot_only_when_idle: 'Never reboot a phone that is on a call.',
 		reboot_window: 'Only reboot VPN phones inside this window, e.g. 01:00-05:00 (blank = any time).',
 	};

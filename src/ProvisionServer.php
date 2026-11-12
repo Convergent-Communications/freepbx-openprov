@@ -107,7 +107,7 @@ class ProvisionServer
 			return $this->deny(403, 'device disabled', $log);
 		}
 		try {
-			$out = $this->builder->render($device);
+			$out = $this->builder->render($device, $ip);
 		} catch (\Throwable $e) {
 			return $this->deny(500, 'render failed: ' . $e->getMessage(), $log);
 		}

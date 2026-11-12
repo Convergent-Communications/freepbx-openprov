@@ -129,6 +129,11 @@ class FakeVpn extends Vpn
 		return '10.8.0.1';
 	}
 
+	public function tunnelNetwork(): ?array
+	{
+		return ['10.8.0.0', 24];
+	}
+
 	public function port(): int
 	{
 		return 1194;
@@ -481,14 +486,46 @@ $tests['render: template-only view and per-model VPN update method'] = function 
 	eq('Alice', $d['template_view']['keys']['line'][3]['label'], 'template column shows the template key');
 	eq('Override', $d['effective']['keys']['line'][3]['label'], 'phone gets its override');
 	eq('Base', $d['template_view']['name']);
-	// auto: T87W (quirk) is rebooted, so with method "auto" and no reachable phone it reports a reboot attempt; T57W gets check-sync.
+	// auto = check-sync for every model now that tunnel-bound phones provision through the tunnel
 	$w->settings->set('vpn_update_method', 'auto');
 	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['vpn' => 'auto']]);
-	eq('phone-api-reboot', $w->svc->resync([MAC])[0]['method']);
+	eq('notify', $w->svc->resync([MAC])[0]['method']);
 	$w->svc->saveDevice(['mac' => '80:5e:c0:d6:7c:5f', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '201']], 'settings' => ['vpn' => '6']]);
 	eq('notify', $w->svc->resync(['805ec0d67c5f'])[0]['method']);
 	eq(true, $w->settings->get('resync_on_apply_config'));
 	throws(fn() => $w->settings->set('vpn_update_method', 'sometimes'), 'vpn_update_method');
+};
+
+$tests['render: tunnel-bound VPN phones provision through the tunnel'] = function () {
+	$w = world();
+	phone($w, ['settings' => ['vpn' => 'auto']]);
+	$d = $w->store->deviceByMac(MAC);
+	$pass = $d['prov_pass'];
+	// First contact from the LAN: server URL and SIP go to the tunnel, but the
+	// VPN profile must come from a direct address (no tunnel yet).
+	$cfg = kv($w->builder->render($d, '192.168.1.246')['text']);
+	ok(str_contains($cfg['static.auto_provision.server.url'], '://10.8.0.1:'), $cfg['static.auto_provision.server.url']);
+	eq('10.8.0.1', $cfg['account.1.sip_server.1.address']);
+	ok(!str_contains($cfg['openvpn.url'], '10.8.0.1'), 'vpn tar not via the tunnel on first contact');
+	// Request through the tunnel: everything through the tunnel.
+	$cfg = kv($w->builder->render($d, '10.8.0.2')['text']);
+	ok(str_contains($cfg['openvpn.url'], '@10.8.0.1:'), $cfg['openvpn.url']);
+	// Server records the request IP, and sync renders reuse it (same hash as the phone got).
+	$r = $w->server->handle('/c4fc221dd637.cfg', UA, '10.8.0.2', MAC, $pass);
+	eq(200, $r['status']);
+	$d = $w->store->deviceByMac(MAC);
+	eq($d['last_hash'], $w->builder->render($d)['hash'], 'sync render matches what the phone fetched');
+	// A VPN provisioning host name overrides the tunnel address.
+	$w->settings->set('vpn_provisioning_host', 'prov-vpn.example.com');
+	$cfg = kv($w->builder->render($d)['text']);
+	ok(str_contains($cfg['static.auto_provision.server.url'], 'prov-vpn.example.com'));
+	// A model without the quirk keeps the template's network (internal).
+	$w->svc->saveDevice(['mac' => '80:5e:c0:d6:7c:5f', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '212']], 'settings' => ['vpn' => 'auto']]);
+	$cfg = kv($w->builder->render($w->store->deviceByMac('805ec0d67c5f'), '192.168.1.126')['text']);
+	ok(!str_contains($cfg['static.auto_provision.server.url'], 'prov-vpn'), $cfg['static.auto_provision.server.url']);
+	throws(fn() => $w->settings->set('firewall_zones', 'internal,dmz'), 'dmz');
+	$w->settings->set('firewall_zones', 'Internal, other');
+	eq('internal,other', $w->settings->get('firewall_zones'));
 };
 
 $tests['service: null template and parent are accepted'] = function () {

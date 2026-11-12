@@ -105,7 +105,61 @@ CONF;
 			return [false, "apache2ctl configtest failed; change rolled back:\n" . implode("\n", $out)];
 		}
 		exec('systemctl reload apache2 2>&1', $out2, $rc2);
-		return [$rc2 === 0, $rc2 === 0 ? 'Provisioning web server installed' : implode("\n", $out2)];
+		$fwMsg = '';
+		try {
+			$fwMsg = (string) $this->ensureFirewall();
+		} catch (\Throwable $e) {
+			$fwMsg = 'Firewall: could not add the service (' . $e->getMessage() . ')';
+		}
+		return [$rc2 === 0, ($rc2 === 0 ? 'Provisioning web server installed' : implode("\n", $out2)) . ($fwMsg !== '' ? "\n" . $fwMsg : '')];
+	}
+
+	/**
+	 * Open the provisioning port(s) in the FreePBX firewall: a custom service
+	 * "OpenProv provisioning" in the zones from the firewall_zones setting.
+	 * Returns a message, or null when the firewall module isn't present/on.
+	 */
+	public function ensureFirewall(): ?string
+	{
+		try {
+			$fw = \FreePBX::Firewall();
+		} catch (\Throwable $e) {
+			return null;
+		}
+		$ports = array_filter([(int) $this->settings->get('https_port'), (int) $this->settings->get('http_port')]);
+		if (!$ports) {
+			return null;
+		}
+		$portStr = implode(',', $ports);
+		$zones = array_values(array_intersect(
+			array_filter(array_map('trim', explode(',', (string) $this->settings->get('firewall_zones')))),
+			['trusted', 'internal', 'other', 'external']
+		));
+		$id = null;
+		foreach ((array) $fw->getAllCustomServices() as $cid => $svc) {
+			if (is_array($svc) && ($svc['name'] ?? '') === 'OpenProv provisioning') {
+				$id = $svc['custid'] ?? $cid;
+			}
+		}
+		if ($id === null) {
+			$fw->addCustomService('OpenProv provisioning', 'tcp', $portStr);
+			foreach ((array) $fw->getAllCustomServices() as $cid => $svc) {
+				if (is_array($svc) && ($svc['name'] ?? '') === 'OpenProv provisioning') {
+					$id = $svc['custid'] ?? $cid;
+				}
+			}
+		} else {
+			$fw->editCustomService($id, 'OpenProv provisioning', 'tcp', $portStr);
+		}
+		if ($id !== null) {
+			$fw->setCustomServiceZones($id, $zones);
+		}
+		$restarted = '';
+		if (method_exists($fw, 'isEnabled') && $fw->isEnabled() && function_exists('posix_geteuid') && posix_geteuid() === 0) {
+			exec('fwconsole firewall restart 2>&1', $o, $rc);
+			$restarted = $rc === 0 ? ' (firewall restarted)' : ' (firewall restart failed: ' . implode(' ', array_slice($o, -2)) . ')';
+		}
+		return "Firewall: TCP $portStr open for zones " . (implode(', ', $zones) ?: 'none') . $restarted;
 	}
 
 	public function uninstall(): array

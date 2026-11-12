@@ -33,6 +33,12 @@ class Settings
 		// OpenVPN is up, so VPN phones are updated by rebooting them through
 		// their web API (DESIGN.md D8a). 'reboot' | 'notify' | 'none'.
 		'vpn_update_method' => 'auto',
+		// Host VPN phones provision from once their tunnel is up (models whose
+		// provisioning is bound to the tunnel, e.g. T87W 185.87.x). Blank = the
+		// VPN server's tunnel address (10.8.0.1). Must not be the VPN endpoint IP.
+		'vpn_provisioning_host' => '',
+		// FreePBX firewall zones the provisioning port is opened in (custom service).
+		'firewall_zones' => 'internal,other',
 		'reboot_only_when_idle' => true,
 		'reboot_window' => '',          // "HH:MM-HH:MM" (PBX local time); blank = any time
 	];
@@ -91,6 +97,17 @@ class Settings
 		}
 		if ($key === 'vpn_update_method' && !in_array($value, ['auto', 'reboot', 'notify', 'none'], true)) {
 			throw new \InvalidArgumentException('vpn_update_method must be auto, reboot, notify or none');
+		}
+		if ($key === 'firewall_zones') {
+			$zones = array_filter(array_map('trim', explode(',', strtolower($value))));
+			$bad = array_diff($zones, ['trusted', 'internal', 'other', 'external']);
+			if ($bad) {
+				throw new \InvalidArgumentException('firewall_zones: unknown zone ' . implode(', ', $bad) . ' (use trusted, internal, other, external)');
+			}
+			$value = implode(',', $zones);
+		}
+		if ($key === 'vpn_provisioning_host' && $value !== '' && !preg_match('/^[a-z0-9.-]+$/i', $value)) {
+			throw new \InvalidArgumentException('vpn_provisioning_host must be a host name or IP address');
 		}
 		if ($key === 'reboot_window' && $value !== '' && !preg_match('/^\d{1,2}:\d{2}-\d{1,2}:\d{2}$/', $value)) {
 			throw new \InvalidArgumentException('reboot_window must look like 01:00-05:00');

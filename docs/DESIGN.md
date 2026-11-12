@@ -254,6 +254,24 @@ picks the host and port written into `auto_provision.server.url`.
 - **Setting:** `static.auto_provision.custom.protect = 0` is emitted by default (`keep_local_changes = 0`).
 - **Why:** without it, labels edited earlier on the phone or its web UI silently beat the provisioned ones (seen on the T87W). The admin can opt back in per template.
 
+## D10c. Ringtones are referenced by name; defaults are always sent (2026-11-12)
+
+Based on T87W tests (TESTING.md):
+
+- **Every ringtone is referenced by name:**
+  - built-ins as `Resource:RingN.wav`
+  - uploads as `Config:<file>`
+
+  This covers the default ringtone and distinctive-ring ringers. The phone numbers custom ringtones alphabetically after its built-ins, and the built-in count differs by model, so numbers break when a file is added or the model changes.
+- **Uploaded ringtones:** every one in use (the default plus any distinctive-ring ringers) is a `ringtone.url` line in the same config, and all of them download in one pass.
+- **Distinctive ring:**
+  - It's a list of `text=ref` rules. When set, all 10 phone slots are written, and unused ones get `%NULL%`, so a removed rule really disappears from the phone.
+  - `none` clears the phone's rules. Blank = not managed.
+- **Settings with Yealink factory defaults** (transfer on DSS key, missed-call pop-up/LED, BLF refresh, rport, Opus) always send their value. Dropping a key from a config does not revert it on the phone, so this is the only way "back to default" works.
+- **Send volumes default to blank** (not managed), because changing one reboots the phone.
+- **Built-in ringtones for listening** are copied from a phone of each model on request (`ringtones.fetch`) and cached on the PBX. They're Yealink's files, so they are not shipped with OpenProv.
+- **Expanded-panel wallpaper:** `backgrounds_with_dsskey_unfold` defaults to the same file as the wallpaper. A different file is a second `wallpaper_upload.url` in the same pass, so no second provisioning pass is needed on the T87W. The T57W is untested.
+
 ## D10b. Firmware is delivered the same way as everything else
 
 - **Mechanism:** firmware files are uploaded once (they're stored outside the web root) and assigned per template or device. `static.firmware.url` points at an authenticated URL, and the front controller streams the file.

@@ -337,16 +337,53 @@ class ConfigBuilder
 		// Assets
 		$urls = ['prov' => $this->baseUrl($network)];
 		$assetBase = $this->baseUrl($fileNetwork, $creds);
-		if (($s['wallpaper'] ?? '') !== '' && ($a = $this->store->asset((int) $s['wallpaper'])) && $a['kind'] === 'wallpaper') {
+		$wallpaper = function (string $id) use ($assetBase, $model, $device): ?array {
+			if ($id === '' || !($a = $this->store->asset((int) $id)) || $a['kind'] !== 'wallpaper') {
+				return null;
+			}
 			$name = Assets::phoneFileName($a, $model['wallpaper'] ? 'jpg' : '');
-			$urls['wallpaper'] = "$assetBase/a/wallpaper/{$a['id']}/" . rawurlencode($device['model']) . "/$name";
-			$urls['wallpaper_name'] = $name;
+			return ['url' => "$assetBase/a/wallpaper/{$a['id']}/" . rawurlencode($device['model']) . "/$name", 'name' => $name];
+		};
+		if ($w = $wallpaper((string) ($s['wallpaper'] ?? ''))) {
+			$urls['wallpaper'] = $w['url'];
+			$urls['wallpaper_name'] = $w['name'];
 		}
-		if (($s['ringtone'] ?? '') !== '' && ($a = $this->store->asset((int) $s['ringtone'])) && $a['kind'] === 'ringtone') {
+		// Wallpaper with the key panel expanded: blank = the same file. A
+		// different file is a second download in the same pass (tested T87W).
+		$wx = $wallpaper((string) ($s['wallpaper_expanded'] ?? '')) ?? ($w ?: null);
+		if ($wx) {
+			$urls['wallpaper_expanded_name'] = $wx['name'];
+			if (!$w || $wx['name'] !== $w['name']) {
+				$urls['wallpaper_expanded'] = $wx['url'];
+			}
+		}
+
+		// Ringtones are referenced by name (Resource:<built-in> or
+		// Config:<uploaded file>): the phone numbers custom ringtones
+		// alphabetically after its built-ins, so numbers shift (TESTING.md).
+		// Every uploaded ringtone in use is downloaded, all in one pass.
+		$ringFiles = [];
+		$ringRef = function (string $ref) use (&$ringFiles, $assetBase): ?string {
+			if (preg_match('/^Resource:[A-Za-z0-9_.\- ]+$/', $ref)) {
+				return $ref;
+			}
+			$id = (int) preg_replace('/^asset:/', '', $ref);
+			if ($id <= 0 || !($a = $this->store->asset($id)) || $a['kind'] !== 'ringtone') {
+				return null;
+			}
 			$name = Assets::phoneFileName($a);
-			$urls['ringtone'] = "$assetBase/a/ringtone/{$a['id']}/$name";
-			$urls['ringtone_name'] = $name;
+			$ringFiles[$name] = "$assetBase/a/ringtone/{$a['id']}/$name";
+			return 'Config:' . $name;
+		};
+		$ringType = ($s['ringtone'] ?? '') !== '' ? $ringRef((string) $s['ringtone']) : null;
+		$distinctive = [];
+		foreach (self::parseDistinctive((string) ($s['distinctive_ring'] ?? '')) as $row) {
+			if (($ringer = $ringRef($row['ref'])) !== null) {
+				$distinctive[] = ['text' => $row['text'], 'ringer' => $ringer];
+			}
 		}
+		$urls['ringtones'] = $ringFiles;
+		$urls['ring_type'] = $ringType;
 		if (($s['firmware'] ?? '') !== '' && ($a = $this->store->asset((int) $s['firmware'])) && $a['kind'] === 'firmware') {
 			$urls['firmware'] = "$assetBase/a/firmware/{$a['id']}/" . rawurlencode($a['name']);
 		}
@@ -386,6 +423,8 @@ class ConfigBuilder
 			'resync_minutes' => (int) ($s['resync_minutes'] ?? 1440),
 			'manage_keys' => ($s['manage_keys'] ?? '1') === '1',
 			'screenshot_from' => ($s['remote_screenshot'] ?? '1') === '1' ? $this->pbxSourceAddresses() : [],
+			'distinctive' => $distinctive,
+			'distinctive_managed' => trim((string) ($s['distinctive_ring'] ?? '')) !== '',
 			'expansion_used' => (int) ($device['settings']['expansion_modules'] ?? 0) > 0,
 		];
 	}
@@ -410,6 +449,26 @@ class ConfigBuilder
 		return array_values(array_unique($ips));
 	}
 
+	/**
+	 * Distinctive-ring rules, one per line: "text=ref" where ref is
+	 * Resource:<built-in>.wav or asset:<id>. "none" = no rules (clears the phone).
+	 */
+	public static function parseDistinctive(string $value): array
+	{
+		$rows = [];
+		foreach (preg_split('/\r\n|\r|\n/', trim($value)) as $line) {
+			$line = trim($line);
+			if ($line === '' || $line === 'none' || !str_contains($line, '=')) {
+				continue;
+			}
+			[$text, $ref] = array_map('trim', explode('=', $line, 2));
+			if ($text !== '' && $ref !== '') {
+				$rows[] = ['text' => $text, 'ref' => $ref];
+			}
+		}
+		return array_slice($rows, 0, 10);
+	}
+
 	/** Schema-mapped (non-computed) settings → vendor keys. */
 	public function schemaKeys(array $ctx): array
 	{
@@ -424,7 +483,7 @@ class ConfigBuilder
 				continue; // blank = leave the phone's own value alone
 			}
 			foreach ($def['keys'] as $keyTpl => $valTpl) {
-				$val = strtr((string) $valTpl, ['{value}' => $value, '{invert}' => $value === '1' ? '0' : '1']);
+				$val = strtr((string) $valTpl, ['{value}' => $value, '{invert}' => $value === '1' ? '0' : '1', '{nonzero}' => (float) $value != 0 ? '1' : '0']);
 				if (!empty($def['perAccount'])) {
 					foreach ($accounts as $n) {
 						$out[str_replace('{account}', (string) $n, $keyTpl)] = $val;

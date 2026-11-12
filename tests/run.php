@@ -564,6 +564,74 @@ $tests['render: screenshots allowed from the PBX addresses only'] = function () 
 	throws(fn() => $w->svc->screenshot('001565000099'), '');
 };
 
+$tests['render: ringtones by name, distinctive ring, expanded wallpaper, new settings'] = function () {
+	$w = world();
+	$wav = tempnam(sys_get_temp_dir(), 'rt');
+	file_put_contents($wav, 'RIFF' . pack('V', 36) . 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, 8000, 16000, 2, 16) . 'data' . pack('V', 0));
+	$cg = $w->svc->addAsset('ringtone', 'caregiver.wav', $wav);
+	$cl = $w->svc->addAsset('ringtone', 'client.wav', $wav);
+	phone($w, ['settings' => [
+		'ringtone' => 'Resource:Ring3.wav',
+		'distinctive_ring' => "internal=Resource:Ring6.wav\ncg=asset:{$cg['id']}\ncl=asset:{$cl['id']}",
+		'opus' => '6', 'rport' => '1', 'dss_transfer' => '1',
+	]]);
+	$cfg = kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+	eq('Resource:Ring3.wav', $cfg['phone_setting.ring_type']);
+	eq(2, count($cfg['ringtone.url']), 'both uploaded ringtones download in one pass');
+	eq('Resource:Ring6.wav', $cfg['distinctive_ring_tones.alert_info.1.ringer']);
+	eq('cg', $cfg['distinctive_ring_tones.alert_info.2.text']);
+	ok(str_starts_with($cfg['distinctive_ring_tones.alert_info.2.ringer'], 'Config:op'), 'uploaded ringer by file name');
+	eq('%NULL%', $cfg['distinctive_ring_tones.alert_info.10.text'], 'unused slots cleared');
+	eq('1', $cfg['account.1.codec.opus.enable']);
+	eq('6', $cfg['account.1.codec.opus.priority']);
+	eq('1', $cfg['account.1.nat.rport']);
+	eq('1', $cfg['transfer.dsskey_deal_type']);
+	ok(!isset($cfg['voice.handfree_send']), 'volumes unmanaged unless set');
+	// defaults are always sent, so clearing a setting reverts the phone
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['ringtone' => 'Resource:Ring3.wav']]);
+	$cfg = kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+	eq('2', $cfg['transfer.dsskey_deal_type']);
+	eq('0', $cfg['account.1.codec.opus.enable']);
+	ok(!isset($cfg['distinctive_ring_tones.alert_info.1.text']), 'distinctive unmanaged when blank');
+	// "none" clears the phone's rules
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['distinctive_ring' => 'none']]);
+	eq('%NULL%', kv($w->builder->render($w->store->deviceByMac(MAC))['text'])['distinctive_ring_tones.alert_info.1.text']);
+	// validation
+	throws(fn() => $w->svc->saveDevice(['mac' => MAC, 'settings' => ['handsfree_send' => '60']]), 'between');
+	throws(fn() => $w->svc->saveDevice(['mac' => MAC, 'settings' => ['distinctive_ring' => 'a&b=Resource:Ring1.wav']]), '32 characters');
+	throws(fn() => $w->svc->saveDevice(['mac' => MAC, 'settings' => ['distinctive_ring' => 'x=asset:999']]), 'no uploaded');
+	throws(fn() => $w->svc->saveDevice(['mac' => MAC, 'settings' => ['ringtone' => 'Ring1']]), 'Resource');
+	// expanded wallpaper defaults to the wallpaper; a different one is a second download
+	if (function_exists('imagecreatetruecolor')) {
+		$img = imagecreatetruecolor(100, 60);
+		$png = tempnam(sys_get_temp_dir(), 'wp') . '.png';
+		imagepng($img, $png);
+		$a = $w->svc->addAsset('wallpaper', 'a.png', $png);
+		$b = $w->svc->addAsset('wallpaper', 'b.png', $png);
+		$w->svc->saveDevice(['mac' => MAC, 'settings' => ['wallpaper' => (string) $a['id']]]);
+		$cfg = kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+		ok(is_string($cfg['wallpaper_upload.url']), 'one wallpaper download');
+		eq($cfg['phone_setting.backgrounds'], $cfg['phone_setting.backgrounds_with_dsskey_unfold']);
+		$w->svc->saveDevice(['mac' => MAC, 'settings' => ['wallpaper' => (string) $a['id'], 'wallpaper_expanded' => (string) $b['id']]]);
+		$cfg = kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+		eq(2, count($cfg['wallpaper_upload.url']));
+		ok($cfg['phone_setting.backgrounds'] !== $cfg['phone_setting.backgrounds_with_dsskey_unfold']);
+		@unlink($png);
+	}
+	@unlink($wav);
+};
+
+$tests['audio: mu-law WAV becomes 16-bit PCM'] = function () {
+	$ulaw = 'RIFF' . pack('V', 40) . 'WAVEfmt ' . pack('VvvVVvv', 16, 7, 1, 8000, 8000, 1, 8) . 'data' . pack('V', 4) . "\xff\x7f\x00\x80";
+	$pcm = \FreePBX\modules\Openprov\Audio::toPcmWav($ulaw);
+	eq(1, unpack('v', substr($pcm, 20, 2))[1], 'format PCM');
+	eq(16, unpack('v', substr($pcm, 34, 2))[1], '16-bit');
+	$samples = array_values(unpack('s*', substr($pcm, 44)));
+	eq(4, count($samples));
+	eq(0, $samples[0], 'mu-law 0xFF is silence');
+	ok($samples[2] < -30000 && $samples[3] > 30000, 'extremes');
+};
+
 $tests['service: null template and parent are accepted'] = function () {
 	$w = world();
 	$d = $w->svc->saveDevice(['mac' => MAC, 'model' => 'T87W', 'template' => null]);

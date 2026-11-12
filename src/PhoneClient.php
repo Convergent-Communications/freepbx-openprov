@@ -108,6 +108,23 @@ class PhoneClient
 		return ($res['json']['ret'] ?? '') === 'ok';
 	}
 
+	/** The phone's file list for a resource type (ringtone, wallpaper…): [{value, display, path}]. */
+	public function resourceList(string $type): array
+	{
+		$res = $this->request('GET', '/api/resource/list?type=' . rawurlencode($type));
+		return is_array($res['json']['data'] ?? null) ? $res['json']['data'] : [];
+	}
+
+	/** Download one resource by its list `path` ("ringtone.system/Ring1.wav"). */
+	public function resourceFile(string $path): ?string
+	{
+		if (!preg_match('#^([a-z]+)\.([a-z]+)/([^/]+)$#i', $path, $m)) {
+			return null;
+		}
+		$res = $this->request('GET', '/api/resource/file?res=' . rawurlencode($m[1]) . '&type=' . rawurlencode($m[2]) . '&name=' . rawurlencode($m[3]));
+		return $res['status'] === 200 && $res['json'] === null ? $res['text'] : null;
+	}
+
 	public function autopStatus(): ?string
 	{
 		$res = $this->request('GET', '/api/autop/status?noAutoJump=true');

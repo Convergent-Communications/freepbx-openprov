@@ -183,9 +183,29 @@ class Yealink implements Brand
 			$b['wallpaper_upload.url'] = $ctx['urls']['wallpaper'];
 			$b['phone_setting.backgrounds'] = 'Config:' . $ctx['urls']['wallpaper_name'];
 		}
-		if (!empty($ctx['urls']['ringtone'])) {
-			$b['ringtone.url'] = $ctx['urls']['ringtone'];
-			$b['phone_setting.ring_type'] = 'Config:' . $ctx['urls']['ringtone_name'];
+		if (!empty($ctx['urls']['wallpaper_expanded'])) {
+			$b['wallpaper_upload.url#x'] = $ctx['urls']['wallpaper_expanded'];
+		}
+		if (!empty($ctx['urls']['wallpaper_expanded_name'])) {
+			$b['phone_setting.backgrounds_with_dsskey_unfold'] = 'Config:' . $ctx['urls']['wallpaper_expanded_name'];
+		}
+		// Several ringtone.url lines all download in one pass ("#rN" keeps
+		// them apart in the map; format() strips it).
+		$n = 0;
+		foreach ($ctx['urls']['ringtones'] ?? [] as $url) {
+			$b['ringtone.url#r' . (++$n)] = $url;
+		}
+		if (!empty($ctx['urls']['ring_type'])) {
+			$b['phone_setting.ring_type'] = $ctx['urls']['ring_type'];
+		}
+		// Distinctive ring: all 10 slots are written when managed, so removed
+		// rules are cleared on the phone (dropping a key doesn't revert it).
+		if (!empty($ctx['distinctive_managed'])) {
+			for ($i = 1; $i <= 10; $i++) {
+				$r = $ctx['distinctive'][$i - 1] ?? null;
+				$b["distinctive_ring_tones.alert_info.$i.text"] = $r ? $r['text'] : '%NULL%';
+				$b["distinctive_ring_tones.alert_info.$i.ringer"] = $r ? $r['ringer'] : '1';
+			}
 		}
 		if (!empty($ctx['urls']['firmware'])) {
 			$b['static.firmware.url'] = $ctx['urls']['firmware'];

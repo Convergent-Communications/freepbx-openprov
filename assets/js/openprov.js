@@ -61,10 +61,10 @@
 	const cache = {};
 	async function lookups() {
 		if (!cache.models) {
-			const [models, schema, keytypes, targets, extensions, templates, assets, vpn] = await Promise.all([
-				api('models'), api('schema'), api('keytypes'), api('targets'), api('extensions'), api('templates.list'), api('assets.list'), api('vpn.clients'),
+			const [models, schema, keytypes, targets, extensions, templates, assets, vpn, builtin] = await Promise.all([
+				api('models'), api('schema'), api('keytypes'), api('targets'), api('extensions'), api('templates.list'), api('assets.list'), api('vpn.clients'), api('ringtones.builtin'),
 			]);
-			Object.assign(cache, { models, schema, keytypes, targets, extensions, templates, assets, vpn });
+			Object.assign(cache, { models, schema, keytypes, targets, extensions, templates, assets, vpn, builtin });
 		}
 		return cache;
 	}
@@ -157,9 +157,9 @@
 			// address, global password, no wallpaper…); only plain settings go unmanaged.
 			const unmanaged = blank && !s.computed;
 			const from = src === 'default' ? 'default' : `from ${src}`;
-			const ph = unmanaged ? 'phone decides (not managed)' : (blank ? 'not set' : shown);
+			const ph = unmanaged ? 'phone decides (not managed)' : (blank ? (s.blankLabel || 'not set') : shown);
 			// In a dropdown the inherited entry sits beside the real choices, so name its source.
-			const inhOpt = unmanaged ? 'Phone decides (not managed)' : (blank ? 'Not set (inherited)' : `${shown} (${from})`);
+			const inhOpt = unmanaged ? 'Phone decides (not managed)' : (blank ? (s.blankLabel || 'Not set') + ' (inherited)' : `${shown} (${from})`);
 			const tip = blank && s.computed ? (s.help || 'Not set: OpenProv works this value out (see the label).') : unmanaged ? 'Nothing set here or above: OpenProv sends nothing and the phone keeps its own value (factory default or whatever was set on the phone).' : `Inherited: ${shown} (${from})`;
 			const name = `data-setting="${esc(s.id)}"`;
 			let input;
@@ -168,6 +168,13 @@
 				input = `<select class="form-control form-control-sm" ${name}>${opt('', inhOpt, v === '')}${selectOptions(s).map((o) => opt(o.value, o.label, String(v) === String(o.value))).join('')}</select>`;
 			} else if (s.type.startsWith('asset:') || s.type === 'vpn') {
 				input = `<select class="form-control form-control-sm" ${name}>${opt('', inhOpt, v === '')}${selectOptions(s).map((o) => opt(o.value, o.label, String(v) === String(o.value))).join('')}</select>`;
+			} else if (s.type === 'ringtone') {
+				input = `<div class="input-group input-group-sm"><select class="form-control form-control-sm" ${name}>${opt('', inhOpt, v === '')}${ringtoneOptionsHtml(String(v), false)}</select>
+					<div class="input-group-append"><button class="btn btn-default op-play" type="button" title="Listen" data-play-for="${esc(s.id)}" data-inherited="${esc(inh ?? '')}">&#9654;</button></div></div>`;
+			} else if (s.type === 'distinctive') {
+				input = distinctiveEditor(s, String(v), String(inh ?? ''));
+			} else if (s.type === 'number') {
+				input = `<input class="form-control form-control-sm" type="number" ${s.min !== undefined ? `min="${s.min}"` : ''} ${s.max !== undefined ? `max="${s.max}"` : ''} ${name} value="${esc(v)}" placeholder="${esc(ph)}">`;
 			} else if (s.type === 'textarea') {
 				input = `<textarea class="form-control form-control-sm" rows="2" ${name} placeholder="${esc(ph)}">${esc(v)}</textarea>`;
 			} else if (s.type === 'timezone') {
@@ -175,7 +182,7 @@
 			} else {
 				input = `<input class="form-control form-control-sm" type="${s.type === 'password' ? 'password' : 'text'}" ${name} value="${esc(v)}" placeholder="${esc(ph)}" autocomplete="off">`;
 			}
-			return `<div class="form-group col-md-4 op-field ${v !== '' ? 'op-set' : 'op-inh'}" title="${esc(tip)}">
+			return `<div class="form-group ${s.type === 'distinctive' ? 'col-md-12' : 'col-md-4'} op-field ${v !== '' ? 'op-set' : 'op-inh'}" title="${esc(tip)}">
 				<label class="small mb-0" title="${esc(s.help || '')}">${esc(s.label)}${s.help ? ' <i class="fa fa-question-circle text-muted"></i>' : ''}
 					<span class="badge op-badge">this ${scope}</span>
 					<a href="#" class="op-reset" title="Remove this ${scope}'s value and inherit again">&times; reset</a></label>${input}</div>`;
@@ -194,6 +201,7 @@
 		if (s.type === 'bool') return [{ value: '1', label: 'Yes' }, { value: '0', label: 'No' }];
 		if (s.type === 'select') return s.options;
 		if (s.type === 'vpn') return [{ value: 'off', label: 'Off' }, { value: 'auto', label: "Auto (user's System Admin client)" }, ...cache.vpn.map((c) => ({ value: String(c.id), label: `Client ${c.id}: ${c.description}` }))];
+		if (s.type === 'ringtone') return ringtoneChoices(false);
 		if (s.type.startsWith('asset:')) return cache.assets.filter((a) => a.kind === s.type.slice(6)).map((a) => ({ value: String(a.id), label: a.name + (a.version ? ' (' + a.version + ')' : '') }));
 		return [];
 	}
@@ -202,8 +210,103 @@
 	function displayValue(s, v) {
 		if (v === undefined || v === null || v === '') return '';
 		if (s.type === 'password') return '••••••';
+		if (s.type === 'distinctive') return v === 'none' ? 'no rules' : parseDistinctive(v).map((r) => `${r.text} → ${ringtoneLabel(r.ref)}`).join(', ');
+		if (s.type === 'ringtone') return ringtoneLabel(v);
 		const o = selectOptions(s).find((x) => String(x.value) === String(v));
 		return o ? o.label : String(v);
+	}
+
+	// ---- ringtones -------------------------------------------------------------
+	const DEFAULT_BUILTINS = ['Ring1.wav', 'Ring2.wav', 'Ring3.wav', 'Ring4.wav', 'Ring5.wav', 'Ring6.wav', 'Ring7.wav', 'Ring8.wav', 'Silent.wav', 'Splash.wav'];
+	/** Built-in names: every model fetched so far (in phone order), else the common T5x/T8x set. */
+	function builtinNames() {
+		const lists = Object.values(cache.builtin || {});
+		if (!lists.length) return DEFAULT_BUILTINS;
+		const seen = [];
+		lists.forEach((l) => l.forEach((n) => { if (!seen.includes(n)) seen.push(n); }));
+		return seen.sort((a, b) => (a.localeCompare(b, undefined, { numeric: true })));
+	}
+	/** [{value,label,group}] — uploaded values are "<id>" (ringtone setting) or "asset:<id>" (distinctive). */
+	function ringtoneChoices(assetPrefix) {
+		const up = (cache.assets || []).filter((a) => a.kind === 'ringtone').map((a) => ({ value: (assetPrefix ? 'asset:' : '') + a.id, label: a.name, group: 'Uploaded' }));
+		const bi = builtinNames().map((n) => ({ value: 'Resource:' + n, label: n.replace(/\.wav$/i, ''), group: 'Built-in' }));
+		return [...up, ...bi];
+	}
+	function ringtoneOptionsHtml(selected, assetPrefix) {
+		const groups = {};
+		ringtoneChoices(assetPrefix).forEach((c) => (groups[c.group] = groups[c.group] || []).push(c));
+		return Object.entries(groups).map(([g, list]) => `<optgroup label="${g}">${list.map((c) => `<option value="${esc(c.value)}" ${String(selected) === c.value ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
+	}
+	function ringtoneLabel(ref) {
+		ref = String(ref || '');
+		if (ref.startsWith('Resource:')) return ref.slice(9).replace(/\.wav$/i, '') + ' (built-in)';
+		const a = (cache.assets || []).find((x) => String(x.id) === ref.replace(/^asset:/, ''));
+		return a ? a.name : ref;
+	}
+	const parseDistinctive = (v) => String(v || '').split('\n').map((l) => l.trim()).filter((l) => l && l !== 'none' && l.includes('='))
+		.map((l) => { const i = l.indexOf('='); return { text: l.slice(0, i).trim(), ref: l.slice(i + 1).trim() }; });
+
+	let audio = null;
+	async function playRingtone(ref, model) {
+		if (!ref) return say('Nothing to play: no ringtone selected.', 'warning');
+		if (audio) audio.pause();
+		const r = await api('ringtone.audio', { ref, model: model || undefined });
+		audio = new Audio(`data:${r.mime};base64,${r.data}`);
+		audio.play();
+	}
+	/** The current model for built-in playback (phone editor), else any cached model. */
+	const currentModel = () => ($('#op-model') ? $('#op-model').value : undefined);
+
+	function distinctiveRow(r) {
+		return `<div class="op-dist-row form-inline mb-1">
+			<input class="form-control form-control-sm mr-1" data-dist="text" value="${esc(r.text)}" placeholder="Alert-Info text, e.g. internal" maxlength="32" style="width:16em">
+			<span class="mr-1">&rarr;</span>
+			<select class="form-control form-control-sm mr-1" data-dist="ref">${ringtoneOptionsHtml(r.ref, true)}</select>
+			<button class="btn btn-sm btn-default mr-1" type="button" data-dist-play title="Listen">&#9654;</button>
+			<button class="btn btn-sm btn-link text-danger" type="button" data-dist-del title="Remove">&times;</button></div>`;
+	}
+	function distinctiveEditor(s, v, inh) {
+		const own = v === 'none' ? [] : parseDistinctive(v);
+		const inhText = inh ? (inh === 'none' ? 'no rules' : parseDistinctive(inh).map((r) => `${esc(r.text)} → ${esc(ringtoneLabel(r.ref))}`).join(' · ')) : '';
+		return `<div class="op-dist" data-dist-for="${esc(s.id)}">
+			<input type="hidden" data-setting="${esc(s.id)}" value="${esc(v)}">
+			<div class="op-dist-inh small text-muted mb-1">${inhText ? 'Inherited: ' + inhText : 'Inherited: none (the phone keeps its own rules)'}</div>
+			<div class="op-dist-rows">${own.map(distinctiveRow).join('')}</div>
+			<button class="btn btn-sm btn-default" type="button" data-dist-add>+ Add rule</button>
+			<button class="btn btn-sm btn-link" type="button" data-dist-none title="Override the inherited rules with none (clears them on the phone)">No rules here</button>
+			<span class="small text-muted op-dist-state"></span></div>`;
+	}
+	function wireDistinctive() {
+		$$('.op-dist').forEach((box) => {
+			const hidden = box.querySelector('[data-setting]');
+			const sync = () => {
+				const rows = Array.from(box.querySelectorAll('.op-dist-row')).map((r) => ({ text: r.querySelector('[data-dist="text"]').value.trim(), ref: r.querySelector('[data-dist="ref"]').value }));
+				const lines = rows.filter((r) => r.text).map((r) => `${r.text}=${r.ref}`);
+				if (lines.length) hidden.value = lines.join('\n');
+				else if (hidden.value !== 'none') hidden.value = '';
+				box.querySelector('.op-dist-state').textContent = hidden.value === 'none' ? 'No rules on this level (clears inherited rules).' : '';
+				hidden.dispatchEvent(new Event('change'));
+			};
+			const wireRow = (row) => {
+				row.querySelectorAll('input, select').forEach((el) => el.addEventListener('input', () => { if (hidden.value === 'none') hidden.value = ''; sync(); }));
+				row.querySelector('[data-dist-play]').onclick = () => guard(null, () => playRingtone(row.querySelector('[data-dist="ref"]').value, currentModel()));
+				row.querySelector('[data-dist-del]').onclick = () => { row.remove(); sync(); };
+			};
+			box.querySelectorAll('.op-dist-row').forEach(wireRow);
+			box.querySelector('[data-dist-add]').onclick = () => {
+				if (box.querySelectorAll('.op-dist-row').length >= 10) return say('Yealink phones take at most 10 rules.', 'warning');
+				box.querySelector('.op-dist-rows').insertAdjacentHTML('beforeend', distinctiveRow({ text: '', ref: 'Resource:Ring1.wav' }));
+				wireRow(box.querySelector('.op-dist-rows').lastElementChild);
+				box.querySelector('.op-dist-rows').lastElementChild.querySelector('input').focus();
+			};
+			box.querySelector('[data-dist-none]').onclick = () => { box.querySelector('.op-dist-rows').innerHTML = ''; hidden.value = 'none'; sync(); };
+			box._reset = () => { box.querySelector('.op-dist-rows').innerHTML = ''; hidden.value = ''; sync(); };
+			sync();
+		});
+		$$('[data-play-for]').forEach((b) => (b.onclick = () => guard(b, () => {
+			const sel = b.closest('.input-group').querySelector('select');
+			return playRingtone(sel.value || b.dataset.inherited, currentModel());
+		})));
 	}
 
 	/** Live colouring: a field turns blue when given a value, grey when cleared. */
@@ -213,8 +316,9 @@
 			const sync = () => { f.classList.toggle('op-set', el.value !== ''); f.classList.toggle('op-inh', el.value === ''); };
 			el.addEventListener('input', sync);
 			el.addEventListener('change', sync);
-			f.querySelector('.op-reset').onclick = (e) => { e.preventDefault(); el.value = ''; sync(); };
+			f.querySelector('.op-reset').onclick = (e) => { e.preventDefault(); const box = f.querySelector('.op-dist'); if (box && box._reset) box._reset(); else el.value = ''; sync(); };
 		});
+		wireDistinctive();
 	}
 	const readSettings = () => {
 		const out = {};
@@ -545,7 +649,10 @@
 
 	// ---- files ---------------------------------------------------------------
 	async function assets() {
+		await lookups();
 		const list = await api('assets.list');
+		const [builtin, devs] = await Promise.all([api('ringtones.builtin'), api('devices.list')]);
+		cache.builtin = builtin;
 		const size = (b) => (b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.ceil(b / 1024) + ' KB');
 		main.innerHTML = `
 			<form class="form-inline op-toolbar" id="op-upload">
@@ -556,7 +663,21 @@
 			</form>
 			<p class="small text-muted">Wallpapers are cropped and resized for each model's screen automatically. Assign files in a template or phone (Settings → Display / Audio / Provisioning).</p>
 			<table class="table table-striped table-sm op-table"><thead><tr><th>Kind</th><th>Name</th><th>Version</th><th>Model</th><th>Size</th><th>SHA-256</th><th></th></tr></thead>
-			<tbody>${list.map((a) => `<tr><td>${esc(a.kind)}</td><td>${esc(a.name)}</td><td>${esc(a.version)}</td><td>${esc(a.model)}</td><td>${size(a.size)}</td><td><code class="small">${esc(a.sha256.slice(0, 16))}…</code></td><td><button class="btn btn-sm btn-link text-danger" data-del-asset="${a.id}">delete</button></td></tr>`).join('') || '<tr><td colspan="7" class="text-muted">No files yet.</td></tr>'}</tbody></table>`;
+			<tbody>${list.map((a) => `<tr><td>${esc(a.kind)}</td><td>${esc(a.name)}</td><td>${esc(a.version)}</td><td>${esc(a.model)}</td><td>${size(a.size)}</td><td><code class="small">${esc(a.sha256.slice(0, 16))}…</code></td><td>${a.kind === 'ringtone' ? `<button class="btn btn-sm btn-default" data-play-ref="asset:${a.id}" title="Listen">&#9654;</button> ` : ''}<button class="btn btn-sm btn-link text-danger" data-del-asset="${a.id}">delete</button></td></tr>`).join('') || '<tr><td colspan="7" class="text-muted">No files yet.</td></tr>'}</tbody></table>
+			<h4 class="mt-4">Built-in ringtones</h4>
+			<p class="small text-muted">Yealink's own ringtones can't ship with OpenProv, so they're copied from one of your phones (one per model) and kept on this PBX for listening. Templates and phones refer to them by name, e.g. <code>Resource:Ring6.wav</code>.</p>
+			<div class="form-inline op-toolbar"><select class="form-control form-control-sm mr-2" id="op-rt-dev">${devs.filter((d) => d.last_ip).map((d) => `<option value="${d.id}">${esc((d.name || d.mac) + ' · ' + d.model)}</option>`).join('')}</select>
+				<button class="btn btn-sm btn-default" id="op-rt-fetch">Fetch from this phone</button></div>
+			${Object.keys(builtin).length ? Object.entries(builtin).map(([m, names]) => `<div class="mb-2"><b>${esc(m)}</b> <span class="small text-muted">(${names.length})</span><div class="op-rt-list">${names.map((n) => `<button class="btn btn-sm btn-default mr-1 mb-1" data-play-ref="Resource:${esc(n)}" data-play-model="${esc(m)}">&#9654; ${esc(n.replace(/\.wav$/i, ''))}</button>`).join('')}</div></div>`).join('')
+				: '<p class="text-muted small">None fetched yet.</p>'}`;
+		$$('[data-play-ref]').forEach((b) => (b.onclick = () => guard(b, () => playRingtone(b.dataset.playRef, b.dataset.playModel))));
+		if ($('#op-rt-fetch')) $('#op-rt-fetch').onclick = (e) => guard(e.target, async () => {
+			if (!$('#op-rt-dev').value) return say('No phone with a known address yet.', 'warning');
+			say('Fetching ringtones from the phone…', 'info');
+			const r = await api('ringtones.fetch', { device: +$('#op-rt-dev').value });
+			say(`Fetched ${r.names.length} built-in ringtones for the ${r.model}.`);
+			assets();
+		});
 		$('#op-upload').onsubmit = (e) => {
 			e.preventDefault();
 			const fd = new FormData(e.target);

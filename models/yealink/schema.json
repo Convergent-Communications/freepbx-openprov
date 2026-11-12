@@ -168,13 +168,54 @@
    "help": "1 = presence (shows offline), 0 = dialog. Verified on the T87W."
   },
   {
+   "id": "blf_subscribe_period",
+   "label": "BLF subscription refresh (seconds)",
+   "group": "SIP",
+   "type": "number",
+   "min": 30,
+   "max": 7200,
+   "default": "1800",
+   "perAccount": true,
+   "keys": {
+    "account.{account}.blf.subscribe_period": "{value}"
+   }
+  },
+  {
+   "id": "rport",
+   "label": "NAT: request rport (RFC 3581)",
+   "group": "SIP",
+   "type": "bool",
+   "default": "0",
+   "perAccount": true,
+   "keys": {
+    "account.{account}.nat.rport": "{value}"
+   },
+   "help": "Asks the PBX to reply to the port the phone actually sent from. Helps phones behind NAT."
+  },
+  {
+   "id": "opus",
+   "label": "Opus codec priority (0 = off, 1 = first)",
+   "group": "SIP",
+   "type": "number",
+   "min": 0,
+   "max": 20,
+   "default": "0",
+   "perAccount": true,
+   "keys": {
+    "account.{account}.codec.opus.enable": "{nonzero}",
+    "account.{account}.codec.opus.priority": "{value}"
+   },
+   "help": "Enables Opus on every line at this priority. The PBX extension must also allow opus (codec_opus)."
+  },
+  {
    "id": "timezone",
    "label": "Time zone",
    "group": "Time",
    "type": "timezone",
    "default": "",
    "computed": true,
-   "help": "Blank = the PBX time zone."
+   "help": "Blank = the PBX time zone.",
+   "blankLabel": "PBX time zone"
   },
   {
    "id": "ntp1",
@@ -319,6 +360,16 @@
    "computed": true
   },
   {
+   "id": "wallpaper_expanded",
+   "label": "Wallpaper with keys expanded",
+   "group": "Display",
+   "type": "asset:wallpaper",
+   "default": "",
+   "computed": true,
+   "help": "Shown when the line-key panel is expanded (T5x/T8x). Blank = the same as the wallpaper. Both files download in one provisioning pass.",
+   "blankLabel": "Same as the wallpaper"
+  },
+  {
    "id": "idle_clock",
    "label": "Large idle clock",
    "group": "Display",
@@ -410,9 +461,58 @@
    "id": "ringtone",
    "label": "Ringtone",
    "group": "Audio",
-   "type": "asset:ringtone",
+   "type": "ringtone",
    "default": "",
-   "computed": true
+   "computed": true,
+   "help": "A built-in ringtone (Resource:…) or an uploaded WAV. Use ▶ to listen; built-ins can be listened to once they are fetched from a phone (Files tab)."
+  },
+  {
+   "id": "distinctive_ring",
+   "label": "Distinctive ring (Alert-Info → ringtone)",
+   "group": "Audio",
+   "type": "distinctive",
+   "default": "",
+   "computed": true,
+   "help": "When the PBX sends an Alert-Info matching the text (e.g. 'internal' or info=cg), the phone plays that ringtone. Ringtones are referenced by name, so model differences and new uploads can't shift them. Uploaded ringtones used here are downloaded automatically. Up to 10 rules; unused slots are cleared on the phone."
+  },
+  {
+   "id": "handsfree_send",
+   "label": "Speakerphone send volume (-50 to 50)",
+   "group": "Audio",
+   "type": "number",
+   "min": -50,
+   "max": 50,
+   "default": "",
+   "keys": {
+    "voice.handfree_send": "{value}"
+   },
+   "help": "Microphone level sent in speakerphone mode. The phone reboots to apply a change. Blank = the phone keeps its own value; set 0 to return to the factory level."
+  },
+  {
+   "id": "handset_send",
+   "label": "Handset send volume (-50 to 50)",
+   "group": "Audio",
+   "type": "number",
+   "min": -50,
+   "max": 50,
+   "default": "",
+   "keys": {
+    "voice.handset_send": "{value}"
+   },
+   "help": "The phone reboots to apply a change. Blank = the phone keeps its own value; 0 = factory level."
+  },
+  {
+   "id": "headset_send",
+   "label": "Headset send volume (-50 to 50)",
+   "group": "Audio",
+   "type": "number",
+   "min": -50,
+   "max": 50,
+   "default": "",
+   "keys": {
+    "voice.headset_send": "{value}"
+   },
+   "help": "The phone reboots to apply a change. Blank = the phone keeps its own value; 0 = factory level."
   },
   {
    "id": "call_waiting",
@@ -442,6 +542,50 @@
    "default": "0",
    "keys": {
     "features.intercom.mute": "{value}"
+   }
+  },
+  {
+   "id": "dss_transfer",
+   "label": "BLF / speed-dial key during a call",
+   "group": "Features",
+   "type": "select",
+   "default": "2",
+   "options": [
+    {
+     "value": "2",
+     "label": "Blind transfer"
+    },
+    {
+     "value": "1",
+     "label": "Attended transfer"
+    },
+    {
+     "value": "0",
+     "label": "New call"
+    }
+   ],
+   "keys": {
+    "transfer.dsskey_deal_type": "{value}"
+   }
+  },
+  {
+   "id": "missed_call_popup",
+   "label": "Missed-call pop-up",
+   "group": "Features",
+   "type": "bool",
+   "default": "1",
+   "keys": {
+    "features.missed_call_popup.enable": "{value}"
+   }
+  },
+  {
+   "id": "missed_call_led",
+   "label": "Power LED flashes for missed calls",
+   "group": "Features",
+   "type": "bool",
+   "default": "1",
+   "keys": {
+    "phone_setting.missed_call_power_led_flash.enable": "{value}"
    }
   },
   {

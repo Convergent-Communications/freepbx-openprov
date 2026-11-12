@@ -33,6 +33,9 @@ class Api
 			'device.save' => '{id?|mac, model, template?, name?, enabled?, settings?, raw?, lines?, keys?}',
 			'device.delete' => '{device}',
 			'device.rearm' => '{device, rotate?: bool}',
+			'ringtones.builtin' => ' — cached built-in ringtones per model: {model: [names]}',
+			'ringtones.fetch' => '{device} — fetch that phone\'s built-in ringtones into the cache',
+			'ringtone.audio' => '{ref: asset:<id> | Resource:<name>.wav, model?} — {mime, data (base64)} for listening',
 			'device.screenshot' => '{device} — the phone\'s current screen as {mime, data (base64), host}',
 			'keys.set' => '{scope: template|device, ref, keys: [...], bank?, replace?: bool}',
 			'keys.fill' => '{scope, ref, extensions: [..]|"all", start?, bank?, type?}',
@@ -87,6 +90,9 @@ class Api
 			case 'device.delete': return $s->deleteDevice($need('device'));
 			case 'device.rearm': return $s->rearmDevice($need('device'), $bool('rotate', true));
 			case 'device.screenshot': return $s->screenshot($need('device'));
+			case 'ringtones.builtin': return (object) $s->builtinRingtones();
+			case 'ringtones.fetch': return $s->fetchBuiltinRingtones($need('device'));
+			case 'ringtone.audio': return $s->ringtoneAudio((string) $need('ref'), isset($a['model']) ? (string) $a['model'] : null);
 			case 'keys.set':
 				return $s->setKeys((string) $need('scope'), $need('ref'), (array) ($a['keys'] ?? []), $a['bank'] ?? null, $bool('replace', true));
 			case 'keys.fill':

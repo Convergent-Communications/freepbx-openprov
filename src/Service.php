@@ -729,6 +729,144 @@ class Service
 		return null;
 	}
 
+	private function cleanDistinctive(string $v): string
+	{
+		if (trim($v) === 'none') {
+			return 'none';
+		}
+		$lines = [];
+		foreach (preg_split('/\r\n|\r|\n/', trim($v)) as $line) {
+			if (trim($line) === '') {
+				continue;
+			}
+			if (!str_contains($line, '=')) {
+				throw new \InvalidArgumentException("Distinctive ring: '$line' must be text=ringtone");
+			}
+			[$text, $ref] = array_map('trim', explode('=', $line, 2));
+			if ($text === '' || strlen($text) > 32 || strpbrk($text, '&=') !== false) {
+				throw new \InvalidArgumentException("Distinctive ring: text '$text' must be 1-32 characters without & or =");
+			}
+			if (!preg_match('/^(asset:\d+|Resource:[A-Za-z0-9_.\- ]+\.wav)$/i', $ref)) {
+				throw new \InvalidArgumentException("Distinctive ring: '$ref' must be asset:<id> or Resource:<built-in>.wav");
+			}
+			if (str_starts_with($ref, 'asset:') && (($a = $this->store->asset((int) substr($ref, 6))) === null || $a['kind'] !== 'ringtone')) {
+				throw new \InvalidArgumentException("Distinctive ring: no uploaded ringtone $ref");
+			}
+			$lines[] = "$text=$ref";
+		}
+		if (count($lines) > 10) {
+			throw new \InvalidArgumentException('Distinctive ring: at most 10 rules');
+		}
+		return $lines ? implode("\n", $lines) : 'none';
+	}
+
+	// ---- built-in ringtones ---------------------------------------------------
+	// Yealink's own ringtones can't ship with OpenProv (they're Yealink's), so
+	// they are fetched once from a phone of each model through its web API and
+	// cached on the PBX (as 16-bit PCM WAV, so browsers can play them).
+
+	private function builtinDir(string $model = ''): string
+	{
+		return rtrim($this->assets->dir(), '/') . '/builtin' . ($model !== '' ? '/' . preg_replace('/[^A-Za-z0-9_-]/', '', $model) : '');
+	}
+
+	/** Cached built-in ringtones: model => [names in the phone's order]. */
+	public function builtinRingtones(): array
+	{
+		$out = [];
+		foreach (glob($this->builtinDir() . '/*/index.json') ?: [] as $f) {
+			$names = json_decode((string) file_get_contents($f), true);
+			if (is_array($names)) {
+				$out[basename(dirname($f))] = $names;
+			}
+		}
+		ksort($out);
+		return $out;
+	}
+
+	/** Fetch a phone's built-in ringtones into the cache (for listening in the GUI). */
+	public function fetchBuiltinRingtones($ref): array
+	{
+		$d = $this->deviceRef($ref);
+		$ctx = $this->builder->context($d);
+		$errors = [];
+		foreach ($this->phoneHosts($d, $ctx) as $h) {
+			try {
+				$pc = new PhoneClient($h, $ctx['passwords']['admin']);
+				$pc->login();
+				$list = array_values(array_filter($pc->resourceList('ringtone'), fn($r) => str_starts_with((string) ($r['value'] ?? ''), 'Resource:')));
+				if (!$list) {
+					throw new \RuntimeException("$h: the phone listed no built-in ringtones");
+				}
+				$dir = $this->builtinDir($d['model']);
+				if (!is_dir($dir)) {
+					@mkdir($dir, 0750, true);
+				}
+				$names = [];
+				foreach ($list as $r) {
+					$name = basename((string) $r['display']);
+					$wav = $pc->resourceFile((string) $r['path']);
+					if ($wav === null || !preg_match('/^[A-Za-z0-9_.\- ]+\.wav$/i', $name)) {
+						continue;
+					}
+					file_put_contents("$dir/$name", Audio::toPcmWav($wav));
+					$names[] = $name;
+				}
+				file_put_contents("$dir/index.json", json_encode($names));
+				foreach (glob("$dir/*") ?: [] as $f) {
+					Assets::own($f);
+				}
+				Assets::own($dir);
+				Assets::own($this->builtinDir());
+				return ['model' => $d['model'], 'names' => $names, 'host' => $h];
+			} catch (\Throwable $e) {
+				$errors[] = $e->getMessage();
+			}
+		}
+		throw new \RuntimeException('Could not fetch ringtones: ' . ($errors ? implode('; ', $errors) : 'no known address for the phone'));
+	}
+
+	/**
+	 * Audio for the GUI's play buttons: ref = asset:<id> | <id> (uploaded) or
+	 * Resource:<name> (built-in, from the cache; $model first if given).
+	 */
+	public function ringtoneAudio(string $ref, ?string $model = null): array
+	{
+		if (preg_match('/^Resource:([A-Za-z0-9_.\- ]+\.wav)$/i', $ref, $m)) {
+			$cached = $this->builtinRingtones();
+			$models = array_unique(array_filter(array_merge([$model], array_keys($cached))));
+			foreach ($models as $mod) {
+				$f = $this->builtinDir((string) $mod) . '/' . $m[1];
+				if (is_file($f)) {
+					return ['mime' => 'audio/wav', 'data' => base64_encode((string) file_get_contents($f)), 'model' => $mod];
+				}
+			}
+			throw new \RuntimeException("{$m[1]} isn't cached yet: fetch the built-in ringtones from a phone (Files tab)");
+		}
+		$id = (int) preg_replace('/^asset:/', '', $ref);
+		$a = $this->store->asset($id);
+		if (!$a || $a['kind'] !== 'ringtone' || !is_file($path = $this->assets->path($a))) {
+			throw new \RuntimeException('No such ringtone');
+		}
+		return ['mime' => 'audio/wav', 'data' => base64_encode(Audio::toPcmWav((string) file_get_contents($path)))];
+	}
+
+	/** Addresses to reach a phone's web server at: VPN tunnel first, then its last seen IP. */
+	private function phoneHosts(array $d, array $ctx): array
+	{
+		$hosts = [];
+		if ($ctx['vpn_client'] !== null) {
+			$c = $this->vpn->connectedClients()[$ctx['vpn_client']] ?? null;
+			if ($c && $c['address'] !== '') {
+				$hosts[] = $c['address'];
+			}
+		}
+		if ($d['last_ip'] !== '') {
+			$hosts[] = $d['last_ip'];
+		}
+		return array_values(array_unique($hosts));
+	}
+
 	/** Devices whose config shows an extension: as a line or on a key. */
 	public function devicesShowing(string $ext): array
 	{
@@ -1106,6 +1244,15 @@ class Service
 			}
 			if ($def['type'] === 'vpn' && !in_array($v, ['off', 'auto'], true) && !ctype_digit($v)) {
 				throw new \InvalidArgumentException("'vpn' must be off, auto or a client id");
+			}
+			if ($def['type'] === 'number' && ((isset($def['min']) && $v < $def['min']) || (isset($def['max']) && $v > $def['max']))) {
+				throw new \InvalidArgumentException("'$k' must be between {$def['min']} and {$def['max']}");
+			}
+			if ($def['type'] === 'ringtone' && !ctype_digit($v) && !preg_match('/^(asset:\d+|Resource:[A-Za-z0-9_.\- ]+\.wav)$/i', $v)) {
+				throw new \InvalidArgumentException("'$k' must be an uploaded ringtone or Resource:<built-in>.wav");
+			}
+			if ($def['type'] === 'distinctive') {
+				$v = $this->cleanDistinctive($v);
 			}
 			if (str_starts_with($def['type'], 'asset:') && !ctype_digit($v)) {
 				throw new \InvalidArgumentException("'$k' must be an asset id");

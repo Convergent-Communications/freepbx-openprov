@@ -7,17 +7,27 @@
 
 ## Summary
 
-With OpenVPN enabled and connected, the T87W only completes auto provisioning when the provisioning URL points at an address **inside** the VPN tunnel. When the URL points at any other address — the provisioning server's LAN IP or a DNS hostname — the phone never opens a TCP connection. Its auto-provisioning status then stays at `autoprovision` and it ignores further triggers until it reboots.
+With OpenVPN connected, the T87W **sends all auto-provisioning traffic into the VPN tunnel, regardless of the phone's routing table**. When the provisioning server's address is **the same as the OpenVPN server's endpoint address** (the `remote` in `vpn.cnf`), the phone never sends a request at all. The provisioning task then stays at `autoprovision` and ignores further triggers until it reboots.
 
-This affects every trigger:
-- check-sync NOTIFY
-- Auto Provision Now
-- the Repeatedly timer
-- Power On, once the tunnel is up
+Ordinary traffic isn't affected and follows the normal routing table:
+- SIP to non-tunnel hosts
+- the phone's ping and traceroute diagnostics
+- the firmware download
 
-The T57W, using the same server, the same OpenVPN server and the same configuration, provisions normally with the VPN up, including from the LAN address.
+Evidence (VPN connected; the phone's own traceroute shows non-LAN destinations going via the LAN gateway 192.168.1.1, not the tunnel):
 
-We need remote phones to keep provisioning from our server's **public hostname**, resolved by DNS when provisioning runs, while their VPN carries SIP. Then changing the VPN configuration, or moving a customer to another server, can't leave phones unable to fetch configuration.
+| Provisioning destination | What happened |
+|---|---|
+| `10.8.0.1` (server's tunnel IP) | ✅ Request arrives through the tunnel |
+| `172.31.255.1` (extra address on the server, not on any LAN; the phone has no route except its default gateway) | ✅ Request arrives **through the tunnel** (server `tun0`, from 10.8.0.2), although traceroute sends that address to 192.168.1.1 |
+| `8.8.8.8` (public internet) | Request arrives **through the tunnel** at the VPN server (`tun0`, from 10.8.0.2) instead of going to the internet gateway |
+| `192.168.1.243` (extra server address on the phone's LAN, **not** the VPN endpoint) | ✅ Request arrives through the tunnel |
+| `192.168.1.31` (server LAN IP = **OpenVPN endpoint**) | ❌ No packet at all: no SYN on the phone (on-phone pcap) or the server; status stuck |
+| `192-168-1-31.nip.io` (DNS name → the endpoint IP) | ❌ Same |
+
+The T57W (96.87.0.20), with the same VPN server and endpoint, provisions from `192.168.1.31` normally while connected.
+
+**Why this matters.** Remote phones normally provision from the PBX's public hostname, and that is usually the same public IP as the VPN endpoint. On 185.87.x such phones can't be re-provisioned at all while their VPN is up. And because provisioning is forced into the tunnel, a provisioning server that isn't the VPN server is only reachable if the VPN server forwards the traffic onward.
 
 ## Environment
 
@@ -83,7 +93,8 @@ That is what the T57W does, and what the T87W does for its firmware download.
 
 ## Questions for Yealink
 
-1. Is restricting provisioning to the VPN tunnel intentional on 185.87.x? If so, is there a parameter to let provisioning use the normal network while the VPN is up?
+1. Is sending auto-provisioning through the VPN tunnel (ignoring the routing table) intentional on 185.87.x? Is there a parameter to make provisioning use normal routing while the VPN is up? On the T5x it does.
+1a. Why is a provisioning server whose address equals the OpenVPN `remote` never contacted? Presumably the firmware avoids routing the endpoint into its own tunnel, but then it should use the normal route rather than hang.
 2. If it's a bug, which firmware will fix it, and is it also in the T73/T74/T77/T85 builds that share 185.87.x?
 3. Why does the provisioning task stay at `autoprovision` with no connection attempt and no timeout, instead of failing the attempt and becoming idle? This also blocks check-sync until reboot.
 

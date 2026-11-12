@@ -165,6 +165,7 @@ class Pbx
 	public function hasHint(string $code): bool
 	{
 		foreach ($this->hints() as $pattern => $ctx) {
+			$pattern = (string) $pattern; // numeric extens become int array keys
 			if ($pattern === $code) {
 				return true;
 			}
@@ -224,8 +225,16 @@ class Pbx
 			'donotdisturb/dnd_toggle' => 'DND toggle',
 			'callforward/cf_toggle' => 'Call forward toggle',
 		];
+		// In-call codes and bare prefixes (need digits appended) are useless on a key.
+		$skip = [
+			'core/atxfer', 'core/automon', 'core/blindxfer', 'core/disconnect', 'core/simu_pstn', 'fax/simu_fax',
+			'parking/parkedcall', 'speeddial/callspeeddial', 'paging/intercom-prefix', 'voicemail/directdialvoicemail',
+		];
 		foreach ($this->featureCodes() as $f) {
 			$key = $f['module'] . '/' . $f['feature'];
+			if (in_array($key, $skip, true)) {
+				continue;
+			}
 			if (isset($perExt[$key])) {
 				$value = $f['code'] . '{ext}';
 				$out[] = [
@@ -255,6 +264,7 @@ class Pbx
 		}
 		// Park slots with hints
 		foreach ($this->hints() as $exten => $ctx) {
+			$exten = (string) $exten;
 			if ($ctx === 'park-hints' && preg_match('/^\d+$/', $exten)) {
 				$out[] = [
 					'id' => 'park:' . $exten, 'category' => 'parking', 'label' => 'Park slot ' . $exten,

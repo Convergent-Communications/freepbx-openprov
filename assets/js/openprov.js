@@ -423,7 +423,7 @@
 		const size = (b) => (b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.ceil(b / 1024) + ' KB');
 		main.innerHTML = `
 			<form class="form-inline op-toolbar" id="op-upload">
-				<select class="form-control mr-2" name="kind"><option value="wallpaper">Wallpaper</option><option value="ringtone">Ringtone (WAV)</option><option value="firmware">Firmware (.rom)</option><option value="screensaver">Screensaver</option></select>
+				<select class="form-control mr-2" name="kind"><option value="wallpaper">Wallpaper</option><option value="ringtone">Ringtone (WAV)</option><option value="firmware">Firmware (.rom)</option></select>
 				<input type="file" class="form-control mr-2" name="file" required>
 				<input class="form-control mr-2" name="model" placeholder="model (firmware, optional)">
 				<button class="btn btn-primary">Upload</button>

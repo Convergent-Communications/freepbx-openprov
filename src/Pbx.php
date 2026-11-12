@@ -38,6 +38,71 @@ class Pbx
 		return $this->userCache = $out;
 	}
 
+	/**
+	 * Rename an extension in place: exactly what FreePBX's extension page
+	 * changes for a new Display Name (probed 2026-11-12), and nothing else:
+	 * users.name, devices.description, the SIP callerid ("Name <ext>"), AstDB
+	 * AMPUSER/<ext>/cidname and the voicemail box name. Apply Config is still
+	 * needed for Asterisk's PJSIP caller ID (the caller schedules it).
+	 *
+	 * Not core's GraphQL updateExtension: that deletes and recreates the
+	 * extension and its User Management user (losing groups, password, UCP
+	 * and other modules' per-user data).
+	 */
+	public function renameExtension(string $ext, string $name): array
+	{
+		$old = $this->displayName($ext);
+		if ($old === null) {
+			throw new \InvalidArgumentException("Extension $ext doesn't exist");
+		}
+		$this->db->prepare('UPDATE users SET name = ? WHERE extension = ?')->execute([$name, $ext]);
+		$this->db->prepare('UPDATE devices SET description = ? WHERE id = ? AND user = ?')->execute([$name, $ext, $ext]);
+		$this->db->prepare("UPDATE sip SET data = ? WHERE id = ? AND keyword = 'callerid'")->execute(["$name <$ext>", $ext]);
+		$done = ['users', 'devices', 'sip'];
+		try {
+			$astman = $this->freepbx->astman ?? null;
+			if ($astman && $astman->connected()) {
+				$astman->database_put('AMPUSER', "$ext/cidname", $name);
+				$done[] = 'astdb';
+			}
+		} catch (\Throwable $e) {
+		}
+		try {
+			$vm = $this->freepbx->Voicemail;
+			$box = $vm->getMailbox($ext, false);
+			if ($box) {
+				$box['name'] = $name;
+				$vm->updateMailbox($ext, $box, false);
+				$done[] = 'voicemail';
+			}
+		} catch (\Throwable $e) {
+		}
+		$this->forgetCache();
+		return ['old' => $old, 'new' => $name, 'updated' => $done];
+	}
+
+	/**
+	 * Update the User Management user whose default extension is $ext.
+	 * $fields: any of fname, lname, displayname, email (others untouched).
+	 */
+	public function updateUserDetails(string $ext, array $fields): array
+	{
+		$um = $this->freepbx->Userman;
+		$u = $um->getUserByDefaultExtension($ext);
+		if (empty($u['id'])) {
+			throw new \InvalidArgumentException("Extension $ext has no User Management user");
+		}
+		$fields = array_intersect_key($fields, array_flip(['fname', 'lname', 'displayname', 'email']));
+		if (!$fields) {
+			return ['uid' => (int) $u['id'], 'updated' => []];
+		}
+		if (!$um->updateUserExtraData($u['id'], $fields)) {
+			throw new \RuntimeException('User Management refused the update');
+		}
+		$this->forgetCache();
+		return ['uid' => (int) $u['id'], 'updated' => array_keys($fields)];
+	}
+
 	public function forgetCache(): void
 	{
 		$this->userCache = null;

@@ -37,6 +37,9 @@ arguments can be JSON (`devices='["c4fc221dd637"]'`).
 | `ringtones.fetch` | `device` | Copy that phone's built-in ringtones into the PBX cache (through its web API, tunnel first), converted to 16-bit PCM WAV |
 | `ringtone.audio` | `ref, model?` | `{mime, data}` for listening. `ref` is `asset:<id>` (uploaded) or `Resource:<name>.wav` (built-in, from the cache) |
 | `keys.prune` | | Remove keys that only repeat what is inherited (on every template and phone). Also runs automatically after saves. Returns `{removed}` |
+| `dashboard.policy` | | What the dashboard may change here: `changes_allowed`, `key_types`, `rename_extensions`, `edit_user_details`, `settings` (with labels and options), `features` |
+| `extension.get` | `extension` | Name, the User Management user (`uid, username, fname, lname, displayname, email`), and phones with this extension |
+| `extension.update` | `extension, name?, fname?, lname?, displayname?, email?` | Renames **in place**: the same five places FreePBX's extension page changes (users, devices, SIP callerid, AstDB cidname, voicemail name). It also updates the given User Management fields; other fields are kept. Phones update. Asterisk's caller ID needs Apply Config, which the caller batches. Core's GraphQL `updateExtension` deletes and recreates the extension and its User Management user, so don't use it for renames |
 | `device.sync` | `device, since?` | Live status: `{sync: current\|pending\|stale\|never\|error, last_seen, last_ip, auto_resync, now, events}`, with the phone's requests since `since` (server time). The GUI polls it after Save / Update phone now |
 | `device.screenshot` | `device` | The phone's current screen: `{mime, data (base64), host, ts}`. The PBX fetches `/screencapture` from the phone (through the tunnel for VPN phones). Needs the "Allow screenshots from the PBX" setting (on by default) to have reached the phone |
 | `keys.set` | `scope, ref, keys, bank?, replace?` | `scope` = `template`\|`device`. With `replace=false`, the keys given are merged slot by slot |
@@ -99,3 +102,17 @@ fwconsole openprov resync extension=213                # every phone that shows 
 fwconsole openprov asset.add kind=firmware path=/tmp/Yealink-T7X-185.87.0.37.rom model=T87W
 fwconsole openprov import.epm modelMap='{"SIP-T57W":"T87W"}'   # dry run
 ```
+
+## Remote (GraphQL) callers and the dashboard policy
+
+Every change made through GraphQL is checked against Settings → **Dashboard access** (`Service::checkRemoteChange`):
+
+- **Allowed:**
+  - `keys.set` on a phone, with the allowed key types only. Keys of other types stay as set on the PBX.
+  - `device.save` with allowed settings and features only. It is merged into the phone's settings.
+  - `extension.update`
+  - `resync` and `sync.changed`
+- **Refused:** everything else (templates, raw keys, VPN, passwords, firmware, settings), with a message naming the setting to change.
+- **Never delegated:** `Service::NEVER_FROM_DASHBOARD`, whatever is ticked.
+
+GraphQL callers never get secrets (`reveal` is ignored) and can't name server files.

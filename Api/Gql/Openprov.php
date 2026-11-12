@@ -24,12 +24,6 @@ class Openprov extends Base
 {
 	protected $module = 'openprov';
 
-	/** Actions that only read (allowed with read scope). */
-	private const READ_ACTIONS = [
-		'info', 'settings.get', 'models', 'schema', 'keytypes', 'targets', 'extensions', 'vpn.clients',
-		'templates.list', 'template.get', 'devices.list', 'device.get', 'render', 'devices.showing', 'devices.forExtension',
-		'assets.list', 'events', 'discovered', 'export.csv', 'web.status', 'web.config',
-	];
 
 	private function svc()
 	{
@@ -70,11 +64,11 @@ class Openprov extends Base
 					'args' => ['type' => Type::string(), 'description' => 'JSON object'],
 				],
 				'resolve' => function ($root, $args) {
-					if (!in_array($args['action'], self::READ_ACTIONS, true)) {
+					$svc = $this->svc(); // loads the module (and its autoloader) before Api is referenced
+					if (!in_array($args['action'], Api::READ_ONLY, true)) {
 						throw new \Exception('Not a read-only action; use the openprovAction mutation');
 					}
 					$a = isset($args['args']) ? json_decode($args['args'], true) : [];
-					$svc = $this->svc(); // loads the module (and its autoloader) before Api is referenced
 					return json_encode((new Api($svc, 'remote'))->call($args['action'], is_array($a) ? $a : []), JSON_UNESCAPED_SLASHES);
 				},
 			],

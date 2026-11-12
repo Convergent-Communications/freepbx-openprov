@@ -70,6 +70,25 @@ class FakePbx extends Pbx
 		return $this->userman[$ext] ?? null;
 	}
 
+	public function renameExtension(string $ext, string $name): array
+	{
+		$old = $this->users[$ext] ?? null;
+		if ($old === null) {
+			throw new \InvalidArgumentException("Extension $ext doesn't exist");
+		}
+		$this->users[$ext] = $name;
+		return ['old' => $old, 'new' => $name, 'updated' => ['users']];
+	}
+
+	public function updateUserDetails(string $ext, array $fields): array
+	{
+		if (!isset($this->userman[$ext])) {
+			throw new \InvalidArgumentException("Extension $ext has no User Management user");
+		}
+		$this->userman[$ext] = array_merge($this->userman[$ext], $fields);
+		return ['uid' => $this->userman[$ext]['uid'], 'updated' => array_keys($fields)];
+	}
+
 	public array $users = [
 		'201' => 'Alice Smith',
 		'202' => 'Bob Jones',
@@ -865,6 +884,60 @@ $tests['admin password: shared by default, per-device when enabled, overrides wi
 	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['admin_password' => '13572468']]);
 	eq('admin:13572468', $pw(), 'phone override wins');
 	eq('********', $w->svc->getSettings(true)['device_secret'], 'secret never revealed');
+};
+
+$tests['dashboard policy: remote callers change only what OpenProv allows'] = function () {
+	$w = world();
+	phone($w, ['settings' => ['vpn' => 'off'], 'keys' => [['position' => 9, 'type' => 'xml', 'value' => 'http://x/app', 'label' => 'App']]]);
+	$r = new \FreePBX\modules\Openprov\Api($w->svc, 'remote');
+	$p = $r->call('dashboard.policy', []);
+	ok($p['changes_allowed'] && in_array('blf', $p['key_types'], true) && !in_array('xml', $p['key_types'], true));
+	eq([], $p['settings'], 'no phone settings by default');
+	// own keys with allowed types: fine; the PBX-managed XML key must stay
+	$keys = [['position' => 2, 'type' => 'blf', 'value' => '201'], ['position' => 9, 'type' => 'xml', 'value' => 'http://x/app', 'label' => 'App']];
+	throws(fn() => $r->call('keys.set', ['scope' => 'device', 'ref' => MAC, 'keys' => [['position' => 2, 'type' => 'blf', 'value' => '201']]]), 'managed on the PBX');
+	throws(fn() => $r->call('keys.set', ['scope' => 'device', 'ref' => MAC, 'keys' => [['position' => 3, 'type' => 'url', 'value' => 'http://evil']] + $keys]), "key type 'url'");
+	$r->call('keys.set', ['scope' => 'device', 'ref' => MAC, 'keys' => $keys]); // managed key sent back unchanged
+	eq(['blf', 'xml'], array_column($w->store->keys('device', $w->store->deviceByMac(MAC)['id']), 'type'));
+	throws(fn() => $r->call('keys.set', ['scope' => 'device', 'ref' => MAC, 'keys' => [['position' => 2, 'type' => 'blf', 'value' => '201'], ['position' => 9, 'type' => 'xml', 'value' => 'http://evil', 'label' => 'App']]]), "key type 'xml'");
+	throws(fn() => $r->call('keys.set', ['scope' => 'template', 'ref' => 'Base', 'keys' => []]), 'templates');
+	// settings: none allowed, then one
+	throws(fn() => $r->call('device.save', ['mac' => MAC, 'settings' => ['backlight_time' => '60']]), "setting 'backlight_time'");
+	throws(fn() => $r->call('device.save', ['mac' => MAC, 'raw' => 'x = 1']), 'only phone settings');
+	$w->settings->set('dashboard_settings', 'backlight_time,label_length');
+	$r->call('device.save', ['mac' => MAC, 'settings' => ['backlight_time' => '60']]);
+	$d = $w->store->deviceByMac(MAC);
+	eq('60', $d['settings']['backlight_time']);
+	eq('off', $d['settings']['vpn'], 'other settings untouched by a dashboard save');
+	eq(['backlight_time', 'label_length'], array_column($r->call('dashboard.policy', [])['settings'], 'id'));
+	// renames / user details follow their switches; master switch stops everything
+	$w->settings->set('dashboard_user_details', false);
+	throws(fn() => $r->call('extension.update', ['extension' => '212', 'fname' => 'Rob']), 'User Management');
+	$w->settings->set('dashboard_access', false);
+	throws(fn() => $r->call('resync', ['devices' => [MAC]]), 'turned off');
+	throws(fn() => $r->call('template.delete', ['template' => 'Base']), 'turned off');
+	$w->settings->set('dashboard_access', true);
+	throws(fn() => $r->call('template.delete', ['template' => 'Base']), "action 'template.delete'");
+};
+
+$tests['extension.update: rename + User Management in one call; phones update'] = function () {
+	$w = world();
+	$w->pbx->userman['201'] = ['uid' => 2, 'username' => '201', 'fname' => 'Alice', 'lname' => 'Smith', 'displayname' => '', 'email' => ''];
+	phone($w, ['keys' => [['position' => 2, 'type' => 'blf', 'value' => '201']]]);
+	$d = $w->store->deviceByMac(MAC);
+	$w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', MAC, $d['prov_pass']);
+	$w->sent->exchangeArray([]);
+	$r = $w->svc->updateExtension(['extension' => '201', 'name' => 'Alicia Smythe', 'fname' => 'Alicia', 'lname' => 'Smythe', 'email' => 'a@example.com']);
+	eq('Alice Smith', $r['rename']['old']);
+	eq(['fname', 'lname', 'email'], $r['user']['updated']);
+	ok($r['needs_reload']);
+	eq(1, count($r['phones']), 'the phone showing 201 was told to update');
+	eq('Alicia', kv($w->builder->render($w->store->deviceByMac(MAC))['text'])['linekey.2.label']);
+	eq('Alicia', $w->svc->extensionInfo('201')['user']['fname']);
+	throws(fn() => $w->svc->updateExtension(['extension' => '201', 'name' => 'Bad <name>']), 'without');
+	throws(fn() => $w->svc->updateExtension(['extension' => '201', 'email' => 'nope']), 'valid address');
+	throws(fn() => $w->svc->updateExtension(['extension' => '202', 'fname' => 'Bob']), 'no User Management user');
+	throws(fn() => $w->svc->updateExtension(['extension' => '999', 'name' => 'X']), "doesn't exist");
 };
 
 $tests['service: null template and parent are accepted'] = function () {

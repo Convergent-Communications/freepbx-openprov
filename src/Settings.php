@@ -38,6 +38,15 @@ class Settings
 		// OpenVPN is up, so VPN phones are updated by rebooting them through
 		// their web API (DESIGN.md D8a). 'reboot' | 'notify' | 'none'.
 		'vpn_update_method' => 'auto',
+		// ---- What the dashboard (remote API callers) may change ----------
+		// Enforced in OpenProv's API for every GraphQL caller; the dashboard's
+		// own role permissions apply on top.
+		'dashboard_access' => true,      // master switch for changes from the dashboard
+		'dashboard_key_types' => 'none,line,blf,speeddial,feature,feature_dial,park,park_slot,retrieve_park,voicemail,dnd,forward,transfer,hold,conference,intercom,pickup,group_pickup,directory,call_return,keypad_lock',
+		'dashboard_rename' => true,      // extension display name
+		'dashboard_user_details' => true, // User Management first/last/display name, email
+		'dashboard_settings' => '',      // phone setting ids the dashboard may set per phone
+		'dashboard_features' => '',      // add-on feature ids the dashboard may switch per phone
 		// Host VPN phones provision from once their tunnel is up (models whose
 		// provisioning is bound to the tunnel, e.g. T87W 185.87.x). Blank = the
 		// VPN server's tunnel address (10.8.0.1). Must not be the VPN endpoint IP.

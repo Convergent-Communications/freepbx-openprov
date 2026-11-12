@@ -1018,7 +1018,7 @@
 	async function settings() {
 		const [s, info] = await Promise.all([api('settings.get', { reveal: true }), api('info')]);
 		cache.info = info;
-		const rows = Object.entries(s).filter(([k]) => k !== 'internal_host_effective').map(([k, v]) => {
+		const rows = Object.entries(s).filter(([k]) => k !== 'internal_host_effective' && k !== 'device_secret' && !k.startsWith('dashboard_')).map(([k, v]) => {
 			const input = typeof v === 'boolean'
 				? `<select class="form-control form-control-sm" data-gs="${k}"><option value="1" ${v ? 'selected' : ''}>Yes</option><option value="0" ${v ? '' : 'selected'}>No</option></select>`
 				: `<input class="form-control form-control-sm" data-gs="${k}" value="${esc(v)}" ${k === 'internal_host' ? `placeholder="${esc(s.internal_host_effective)}"` : ''}>`;
@@ -1031,16 +1031,21 @@
 			<p class="small">Web server: ${w.installed ? (w.current ? '<span class="text-success">installed and current</span>' : '<span class="text-warning">out of date</span>') : '<span class="text-danger">not installed</span>'} (HTTPS ${w.https_port}${w.http_port ? ', HTTP ' + w.http_port : ''}).
 			${w.current ? '' : `Run <code>${esc(w.command)}</code> as root.`} System Admin VPN server: ${info.vpn_server ? 'enabled' : 'off'}.</p>
 			<div class="form-row">${rows}</div>
+			<h4 class="mt-3">Dashboard access</h4>
+			<p class="small text-muted">What the Convergent dashboard (and any other GraphQL API caller) may change on this PBX. Enforced here, in OpenProv; the dashboard's own role permissions apply on top. Templates, raw keys, VPN, passwords and firmware can never be changed from the dashboard.</p>
+			${dashboardAccess(s, await lookups(), await api('features.list'))}
 			<button class="btn btn-primary" id="op-gs-save">Save settings</button>
 			<hr><h4>Phone models</h4>
 			<p class="small text-muted">Brands: Yealink. Each model is a JSON file in <code>models/yealink/</code> (see docs/ADDING-MODELS.md); other brands need a brand driver (<code>src/Brand</code>). Unverified models use vendor data and haven't been checked on hardware.</p>
 			<table class="table table-sm table-striped op-table"><thead><tr><th>Brand</th><th>Model</th><th>Line keys</th><th>Accounts</th><th>Expansion</th><th>Wallpaper</th><th>Verified</th><th>Notes</th></tr></thead>
-			<tbody>${(await lookups()).models.map((m) => `<tr><td>${esc(m.brand)}</td><td>${esc(m.id)}</td><td>${m.lineKeys}</td><td>${m.accounts}</td><td>${m.expansion ? `${m.expansion.modules} × ${m.expansion.keysPerModule}` : '—'}</td><td>${m.wallpaper ? `${m.wallpaper.width}×${m.wallpaper.height}` : '—'}</td><td>${m.verified ? '<span class="badge badge-success">yes</span>' : '<span class="text-muted">no</span>'}</td><td class="small">${m.quirks?.vpnBlocksProvisioning ? '<span class="badge badge-warning">VPN: reboot to update</span> ' : ''}${m.verified ? esc(m.notes || '') : ''}</td></tr>`).join('')}</tbody></table>
+			<tbody>${(await lookups()).models.map((m) => `<tr><td>${esc(m.brand)}</td><td>${esc(m.id)}</td><td>${m.lineKeys}</td><td>${m.accounts}</td><td>${m.expansion ? `${m.expansion.modules} × ${m.expansion.keysPerModule}` : '—'}</td><td>${m.wallpaper ? `${m.wallpaper.width}×${m.wallpaper.height}` : '—'}</td><td>${m.verified ? '<span class="badge badge-success">yes</span>' : '<span class="text-muted">no</span>'}</td><td class="small">${m.quirks?.vpnBlocksProvisioning ? '<span class="badge badge-warning">VPN: provisions through the tunnel</span> ' : ''}${m.verified ? esc(m.notes || '') : ''}</td></tr>`).join('')}</tbody></table>
 			<hr><h4>Import from Endpoint Manager</h4>
 			<p class="small text-muted">Copies EPM extension mappings (MAC, extension, VPN client) into OpenProv. EPM model names can be mapped, e.g. <code>{"SIP-T57W":"T87W"}</code> for phones that were set up as a stand-in model.</p>
 			<div class="form-row"><div class="col-md-4"><input class="form-control" id="op-epm-map" placeholder='{"SIP-T57W":"T87W"}'></div><div class="col-md-3"><select class="form-control" id="op-epm-tpl">${(await lookups()).templates.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></div>
 			<div class="col-md-5"><button class="btn btn-default" id="op-epm-dry">Preview</button> <button class="btn btn-default" id="op-epm-run">Import</button></div></div>
 			<pre class="op-pre mt-2" id="op-epm-out"></pre>`;
+		const syncCsv = (name) => { const h = $(`[data-gs="${name}"]`); h.value = $$(`[data-csv="${name}"]`).filter((c) => c.checked).map((c) => c.value).join(','); };
+		$$('[data-csv]').forEach((c) => (c.onchange = () => syncCsv(c.dataset.csv)));
 		$('#op-gs-save').onclick = (e) => guard(e.target, async () => {
 			const vals = {};
 			$$('[data-gs]').forEach((el) => (vals[el.dataset.gs] = el.value));
@@ -1056,6 +1061,22 @@
 		});
 		$('#op-epm-dry').onclick = () => epm(true);
 		$('#op-epm-run').onclick = () => confirm('Import these phones into OpenProv?') && epm(false);
+	}
+
+	const NEVER_FROM_DASHBOARD = ['admin_password', 'user_password', 'vpn', 'prov_network', 'firmware', 'keep_local_changes', 'manage_keys', 'resync_minutes', 'sip_server', 'sip_port', 'sip_transport', 'web_https_only'];
+	/** The Dashboard access block: on/off switches plus checkbox lists stored as comma lists. */
+	function dashboardAccess(s, c, feats) {
+		const yn = (k, label) => `<div class="form-group col-md-4"><label class="small mb-0">${label}</label><select class="form-control form-control-sm" data-gs="${k}"><option value="1" ${s[k] ? 'selected' : ''}>Yes</option><option value="0" ${s[k] ? '' : 'selected'}>No</option></select></div>`;
+		const list = (k, items) => {
+			const on = String(s[k] || '').split(',').map((x) => x.trim());
+			return `<input type="hidden" data-gs="${k}" value="${esc(s[k] || '')}"><div class="op-checks">${items.map(([v, l]) => `<label class="mr-3 small"><input type="checkbox" data-csv="${k}" value="${esc(v)}" ${on.includes(v) ? 'checked' : ''}> ${esc(l)}</label>`).join('')}</div>`;
+		};
+		const keyTypes = [['none', 'Blank'], ...Object.entries(c.keytypes).filter(([t]) => t !== 'none').map(([t, d]) => [t, d.label])];
+		const settings = c.schema.filter((x) => !x.feature && !NEVER_FROM_DASHBOARD.includes(x.id)).map((x) => [x.id, `${x.group}: ${x.label}`]);
+		return `<div class="form-row">${yn('dashboard_access', 'Allow changes from the dashboard')}${yn('dashboard_rename', 'Rename extensions')}${yn('dashboard_user_details', 'Edit User Management name / email')}</div>
+			<div class="form-group"><label class="small mb-0">Key types the dashboard may put on a phone (a phone's own keys only; keys of other types stay as set here)</label>${list('dashboard_key_types', keyTypes)}</div>
+			<div class="form-group"><label class="small mb-0">Phone settings the dashboard may change per phone (none by default)</label>${list('dashboard_settings', settings)}</div>
+			<div class="form-group"><label class="small mb-0">Add-on features the dashboard may switch on/off per phone</label>${feats.length ? list('dashboard_features', feats.map((f) => [f.id, f.name])) : '<div class="small text-muted">No add-on features defined.</div>'}</div>`;
 	}
 
 	// ---- boot ----------------------------------------------------------------

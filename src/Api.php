@@ -7,6 +7,14 @@ namespace FreePBX\modules\Openprov;
  */
 class Api
 {
+	/** Actions that only read (GraphQL read scope; never checked against the dashboard policy). */
+	public const READ_ONLY = [
+		'info', 'settings.get', 'models', 'schema', 'keytypes', 'targets', 'extensions', 'vpn.clients',
+		'templates.list', 'template.get', 'devices.list', 'device.get', 'render', 'devices.showing', 'devices.forExtension',
+		'assets.list', 'events', 'discovered', 'export.csv', 'web.status', 'web.config',
+		'dashboard.policy', 'features.list', 'device.sync', 'ringtones.builtin', 'extension.get',
+	];
+
 	/**
 	 * $origin: 'cli' (fwconsole, root), 'admin' (the FreePBX GUI) or 'remote'
 	 * (GraphQL API tokens, e.g. the Convergent agent). Only the CLI may name
@@ -45,6 +53,9 @@ class Api
 			'features.list' => ' — every add-on feature (built-in and custom) with slot, lines and where it is used',
 			'feature.save' => '{id, name, kind: softkey_url|advanced, button_label, url, states[] | requires[], claims{lineKey,softkey}, variables[], lines, remove, globals}',
 			'feature.delete' => '{id} — custom features only, and only when no template/phone sets it',
+			'extension.get' => '{extension} — name, User Management user (fname/lname/displayname/email) and phones',
+			'extension.update' => '{extension, name?, fname?, lname?, displayname?, email?} — rename in place + User Management details; phones update. Apply Config still needed for Asterisk caller ID',
+			'dashboard.policy' => ' — what the dashboard may change here (key types, renames, user details, settings, features)',
 			'device.sync' => '{device, since?: unix time} — {sync: current|pending|stale|never|error, last_seen, events since}',
 			'device.screenshot' => '{device} — the phone\'s current screen as {mime, data (base64), host}',
 			'keys.set' => '{scope: template|device, ref, keys: [...], bank?, replace?: bool}',
@@ -76,6 +87,9 @@ class Api
 		}
 		if ($this->origin === 'remote') {
 			unset($a['reveal']);
+			if (!in_array($action, self::READ_ONLY, true)) {
+				$a = $this->svc->checkRemoteChange($action, $a); // throws when not allowed
+			}
 		}
 		$s = $this->svc;
 		$need = function (string $k) use ($a) {
@@ -111,6 +125,9 @@ class Api
 			case 'features.list': return $s->listFeatures();
 			case 'feature.save': return $s->saveFeature($a);
 			case 'feature.delete': return $s->deleteFeature((string) $need('id'));
+			case 'dashboard.policy': return $s->dashboardPolicy();
+			case 'extension.get': return $s->extensionInfo((string) $need('extension'));
+			case 'extension.update': return $s->updateExtension($a);
 			case 'device.sync': return $s->deviceSync($need('device'), (int) ($a['since'] ?? 0));
 			case 'ringtones.builtin': return (object) $s->builtinRingtones();
 			case 'ringtones.fetch': return $s->fetchBuiltinRingtones($need('device'));

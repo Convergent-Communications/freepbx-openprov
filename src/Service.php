@@ -8,7 +8,7 @@ namespace FreePBX\modules\Openprov;
  */
 class Service
 {
-	public const VERSION = '0.1.0';
+	public const VERSION = '0.1.2';
 	private bool $deferSync = false;
 
 	public function __construct(
@@ -298,6 +298,201 @@ class Service
 			'auto_resync' => (bool) $this->settings->get('auto_resync'),
 			'now' => time(),
 			'events' => array_map(fn($e) => ['ts' => (int) $e['ts'], 'ip' => $e['ip'], 'path' => $e['path'], 'status' => (int) $e['status'], 'detail' => $e['detail']], $events),
+		];
+	}
+
+	// ---- dashboard access policy ------------------------------------------
+
+	/** Settings that can never be delegated to the dashboard, whatever is ticked. */
+	public const NEVER_FROM_DASHBOARD = [
+		'admin_password', 'user_password', 'vpn', 'prov_network', 'firmware', 'keep_local_changes', 'manage_keys',
+		'resync_minutes', 'sip_server', 'sip_port', 'sip_transport', 'web_https_only',
+	];
+
+	private function csv(string $key): array
+	{
+		return array_values(array_filter(array_map('trim', explode(',', (string) $this->settings->get($key)))));
+	}
+
+	/**
+	 * What the dashboard may change on this PBX, with enough detail to build
+	 * its forms (labels, options).
+	 */
+	public function dashboardPolicy(string $brand = 'yealink'): array
+	{
+		$on = (bool) $this->settings->get('dashboard_access');
+		$types = $this->builder->brand($brand)->keyTypes();
+		$schema = [];
+		foreach ($this->catalog->schema($brand) as $s) {
+			$schema[$s['id']] = $s;
+		}
+		$settings = [];
+		foreach ($this->csv('dashboard_settings') as $id) {
+			if (isset($schema[$id]) && empty($schema[$id]['feature']) && !in_array($id, self::NEVER_FROM_DASHBOARD, true)) {
+				$settings[] = array_intersect_key($schema[$id], array_flip(['id', 'label', 'group', 'type', 'options', 'default', 'help', 'min', 'max']));
+			}
+		}
+		$features = [];
+		$all = $this->catalog->features($brand);
+		foreach ($this->csv('dashboard_features') as $id) {
+			if (isset($all[$id])) {
+				$features[] = ['id' => $id, 'name' => $all[$id]['label'] ?? $id, 'description' => $all[$id]['description'] ?? ''];
+			}
+		}
+		return [
+			'version' => self::VERSION,
+			'changes_allowed' => $on,
+			'key_types' => $on ? array_values(array_intersect($this->csv('dashboard_key_types'), array_keys($types))) : [],
+			'rename_extensions' => $on && (bool) $this->settings->get('dashboard_rename'),
+			'edit_user_details' => $on && (bool) $this->settings->get('dashboard_user_details'),
+			'settings' => $on ? $settings : [],
+			'features' => $on ? $features : [],
+		];
+	}
+
+	/**
+	 * Enforce the policy for a change from a remote (dashboard) caller.
+	 * Returns the arguments to run with (device.save is narrowed to settings).
+	 */
+	public function checkRemoteChange(string $action, array $a): array
+	{
+		$p = $this->dashboardPolicy();
+		$deny = fn(string $why) => throw new \InvalidArgumentException("Not allowed from the dashboard: $why (OpenProv → Settings → Dashboard access)");
+		if (!$p['changes_allowed']) {
+			$deny('changes are turned off');
+		}
+		switch ($action) {
+			case 'resync':
+			case 'sync.changed':
+				return $a;
+			case 'keys.set':
+				if (($a['scope'] ?? '') !== 'device') {
+					$deny('only a phone\'s own keys can be changed, not templates');
+				}
+				$d = $this->deviceRef($a['ref'] ?? '');
+				$allowed = $p['key_types'];
+				$existing = [];
+				foreach ($this->store->keys('device', $d['id']) as $k) {
+					$existing[$k['bank'] . '/' . $k['position']] = $k;
+				}
+				$same = fn(array $x, ?array $y) => $y && ($x['type'] ?? '') === $y['type'] && (string) ($x['value'] ?? '') === $y['value'] && (string) ($x['label'] ?? '') === $y['label'];
+				$incoming = [];
+				foreach ((array) ($a['keys'] ?? []) as $k) {
+					$k = (array) $k;
+					$type = (string) ($k['type'] ?? '');
+					$pos = ($k['bank'] ?? $a['bank'] ?? 'line') . '/' . (int) ($k['position'] ?? 0);
+					// a PBX-managed key sent back unchanged is fine
+					if ($type !== '' && $type !== 'inherit' && !in_array($type, $allowed, true) && !$same($k, $existing[$pos] ?? null)) {
+						$deny("key type '$type'");
+					}
+					$incoming[($k['bank'] ?? $a['bank'] ?? 'line') . '/' . (int) ($k['position'] ?? 0)] = $k;
+				}
+				// Keys of types the dashboard may not set are managed on the
+				// PBX: a replace may not remove or change them.
+				if (!isset($a['replace']) || $a['replace']) {
+					foreach ($this->store->keys('device', $d['id']) as $k) {
+						if (in_array($k['type'], $allowed, true) || (isset($a['bank']) && $k['bank'] !== $a['bank'])) {
+							continue;
+						}
+						$in = $incoming[$k['bank'] . '/' . $k['position']] ?? null;
+						if (!$in || ($in['type'] ?? '') !== $k['type'] || (string) ($in['value'] ?? '') !== $k['value'] || (string) ($in['label'] ?? '') !== $k['label']) {
+							$deny("key {$k['position']} ({$k['type']}) is managed on the PBX");
+						}
+					}
+				}
+				return $a;
+			case 'device.save':
+				$d = $this->deviceRef($a['id'] ?? ($a['mac'] ?? ''));
+				$extra = array_diff(array_keys($a), ['id', 'mac', 'settings']);
+				if ($extra) {
+					$deny('only phone settings can be changed (' . implode(', ', $extra) . ')');
+				}
+				$ok = array_column($p['settings'], 'id');
+				foreach ($p['features'] as $f) {
+					$ok[] = "feature.{$f['id']}";
+				}
+				$settings = $d['settings'];
+				foreach ((array) ($a['settings'] ?? []) as $k => $v) {
+					if (!in_array($k, $ok, true)) {
+						$deny("setting '$k'");
+					}
+					if ($v === null || $v === '') {
+						unset($settings[$k]);
+					} else {
+						$settings[$k] = $v;
+					}
+				}
+				return ['id' => $d['id'], 'settings' => $settings];
+			case 'extension.update':
+				if (isset($a['name']) && !$p['rename_extensions']) {
+					$deny('renaming extensions');
+				}
+				if (array_intersect(array_keys($a), ['fname', 'lname', 'displayname', 'email']) && !$p['edit_user_details']) {
+					$deny('editing User Management details');
+				}
+				return $a;
+		}
+		$deny("action '$action'");
+	}
+
+	// ---- extension identity (name + User Management) ---------------------
+
+	/**
+	 * Update an extension's name and/or its User Management user's details
+	 * in one go, then update every phone that shows it.
+	 * $in: extension, name?, fname?, lname?, displayname?, email?
+	 */
+	public function updateExtension(array $in): array
+	{
+		$ext = trim((string) ($in['extension'] ?? ''));
+		if (!preg_match('/^\d{1,10}$/', $ext)) {
+			throw new \InvalidArgumentException('extension must be digits');
+		}
+		$clean = function (string $k, int $max) use ($in): ?string {
+			if (!array_key_exists($k, $in) || $in[$k] === null) {
+				return null;
+			}
+			$v = trim(preg_replace('/\s+/', ' ', (string) $in[$k]));
+			if (strlen($v) > $max || preg_match('/["<>\\\\\x00-\x1f]/', $v)) {
+				throw new \InvalidArgumentException("$k: at most $max characters, without \" < > \\");
+			}
+			return $v;
+		};
+		$out = ['extension' => $ext];
+		$name = $clean('name', 50);
+		if ($name !== null) {
+			if ($name === '') {
+				throw new \InvalidArgumentException('name can\'t be empty');
+			}
+			$out['rename'] = $this->pbx->renameExtension($ext, $name);
+			$out['needs_reload'] = true; // Asterisk's caller ID: Apply Config (the caller batches it)
+		}
+		$fields = [];
+		foreach (['fname' => 50, 'lname' => 50, 'displayname' => 100, 'email' => 120] as $k => $max) {
+			$v = $clean($k, $max);
+			if ($v !== null) {
+				if ($k === 'email' && $v !== '' && !filter_var($v, FILTER_VALIDATE_EMAIL)) {
+					throw new \InvalidArgumentException('email is not a valid address');
+				}
+				$fields[$k] = $v;
+			}
+		}
+		if ($fields) {
+			$out['user'] = $this->pbx->updateUserDetails($ext, $fields);
+		}
+		$out['phones'] = $this->syncChanged();
+		return $out;
+	}
+
+	/** Name, User Management details and phones of one extension (for the dashboard's form). */
+	public function extensionInfo(string $ext): array
+	{
+		$u = $this->pbx->userFor($ext);
+		return [
+			'extension' => $ext,
+			'name' => $this->pbx->displayName($ext),
+			'user' => $u ? array_intersect_key($u, array_flip(['uid', 'username', 'fname', 'lname', 'displayname', 'email'])) : null,
+			'phones' => array_map(fn($d) => ['mac' => $d['mac'], 'model' => $d['model'], 'name' => $d['name']], $this->devicesForExtension($ext)),
 		];
 	}
 

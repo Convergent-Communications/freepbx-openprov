@@ -139,14 +139,6 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 		}
 	}
 
-	public function backup()
-	{
-	}
-
-	public function restore($backup)
-	{
-	}
-
 	/**
 	 * Called by FreePBX during Apply Config / fwconsole reload. Re-sync phones
 	 * whose configuration changed (e.g. a user's display name was edited in

@@ -194,7 +194,8 @@ class Pbx
 					if ($end === false) {
 						return false;
 					}
-					$re .= '[' . preg_quote(substr($pattern, $i + 1, $end - $i - 1), '/') . ']';
+					// Character class: keep ranges (1-3), escape only regex-special chars.
+					$re .= '[' . addcslashes(substr($pattern, $i + 1, $end - $i - 1), '\\]^/') . ']';
 					$i = $end;
 					break;
 				default: $re .= preg_quote($c, '/');

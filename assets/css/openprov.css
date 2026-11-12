@@ -39,3 +39,7 @@
 .openprov .op-keys tr.op-dragging > td { opacity: .45; }
 .openprov .op-keys tr.op-drop-above > td { box-shadow: inset 0 3px 0 #17a2b8; }
 .openprov .op-keys tr.op-drop-below > td { box-shadow: inset 0 -3px 0 #17a2b8; }
+.openprov .op-sync { margin: .25rem 0 .75rem; min-height: 1.6rem; }
+.openprov .op-sync-badge { font-size: .85rem; font-weight: 500; padding: .35em .6em; margin-right: .4rem; }
+.openprov .op-spin { display: inline-block; width: .8em; height: .8em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: op-spin .8s linear infinite; vertical-align: -.1em; }
+@keyframes op-spin { to { transform: rotate(360deg); } }

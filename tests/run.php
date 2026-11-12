@@ -670,6 +670,21 @@ $tests['assets: deleting one of two assets sharing a file keeps the file'] = fun
 	@unlink($f);
 };
 
+$tests['service: device.sync reports state and requests since a time'] = function () {
+	$w = world();
+	phone($w);
+	$d = $w->store->deviceByMac(MAC);
+	eq('never', $w->svc->deviceSync(MAC)['sync']);
+	$t = time();
+	$w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', MAC, $d['prov_pass']);
+	$st = $w->svc->deviceSync(MAC, $t);
+	eq('current', $st['sync']);
+	eq('/c4fc221dd637.cfg', end($st['events'])['path']);
+	eq([], $w->svc->deviceSync(MAC, $t + 3600)['events'], 'nothing after a later time');
+	$w->pbx->users['212'] = 'Renamed';
+	ok(in_array($w->svc->deviceSync(MAC)['sync'], ['stale', 'pending'], true), 'a change shows as not current');
+};
+
 $tests['service: null template and parent are accepted'] = function () {
 	$w = world();
 	$d = $w->svc->saveDevice(['mac' => MAC, 'model' => 'T87W', 'template' => null]);

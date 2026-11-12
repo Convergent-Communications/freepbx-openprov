@@ -541,7 +541,65 @@
 	const rawText = (raw) => Object.entries(raw || {}).map(([k, v]) => `${k.replace(/#\d+$/, '')} = ${v}`).join('\n');
 
 	// ---- device editor -------------------------------------------------------
-	async function deviceEditor(id) {
+	// ---- live sync status --------------------------------------------------
+	const SYNC_TEXT = {
+		current: ['success', 'Phone has the current configuration'],
+		pending: ['info', 'Update sent; waiting for the phone to fetch it'],
+		stale: ['warning', 'Changed, but the phone hasn\'t been told yet (use Update phone now)'],
+		never: ['secondary', 'Phone has never fetched a configuration'],
+		error: ['danger', 'The configuration can\'t be built (see the error above)'],
+	};
+	const fileName = (e) => {
+		if (/\.cfg$/.test(e.path)) return /^\/y0+/.test(e.path) ? 'common config' : 'config';
+		if (/-vpn\.tar$/.test(e.path)) return 'VPN profile';
+		const m = e.path.match(/^\/a\/(wallpaper|ringtone|firmware)\//);
+		return m ? m[1] : e.path;
+	};
+	const hms = (ts) => new Date(ts * 1000).toLocaleTimeString();
+	let syncTimer = null;
+	/** Show the sync state; with `watch` = {since, mode: 'save'|'push'} keep polling until the phone fetches. */
+	async function showSync(id, watch = null) {
+		clearTimeout(syncTimer);
+		const box = $('#op-sync');
+		if (!box) return;
+		const st = await api('device.sync', { device: id, since: watch ? watch.since : 0 });
+		const [kind, text] = SYNC_TEXT[st.sync] || ['secondary', st.sync];
+		const last = st.last_seen ? ` · last fetch ${hms(st.last_seen)} from ${esc(st.last_ip)}` : '';
+		if (!watch) {
+			box.innerHTML = `<span class="badge badge-${kind} op-sync-badge">${esc(text)}</span><span class="small text-muted">${last}</span>`;
+			if (st.sync === 'pending') showSync(id, { since: st.now - 120, mode: 'save', started: st.now });
+			return;
+		}
+		const fetched = st.events.filter((e) => e.status === 200);
+		const gotConfig = fetched.some((e) => fileName(e) === 'config');
+		const failed = st.events.filter((e) => e.status >= 400 && e.status !== 404 && e.status !== 401);
+		const elapsed = st.now - (watch.started || watch.since);
+		const files = [...new Set(fetched.map(fileName))].join(', ');
+		let html;
+		let done = false;
+		if (watch.mode === 'save' && st.sync === 'current' && !gotConfig && elapsed < 3) {
+			html = '<span class="badge badge-success op-sync-badge">Saved. Nothing changed for the phone</span>';
+			done = true;
+		} else if (watch.mode === 'save' && st.sync === 'stale') {
+			html = `<span class="badge badge-warning op-sync-badge">Saved, but not sent to the phone</span><span class="small text-muted">${st.auto_resync ? ' The update request failed; see Activity, or use Update phone now.' : ' Automatic updates are off (Settings); use Update phone now.'}</span>`;
+			done = true;
+		} else if (gotConfig && (st.sync === 'current' || watch.mode === 'push')) {
+			const t = fetched.filter((e) => fileName(e) === 'config').pop();
+			html = `<span class="badge badge-success op-sync-badge">&#10003; Phone fetched its configuration at ${hms(t.ts)}</span><span class="small text-muted"> from ${esc(t.ip)} · ${esc(files)}${elapsed < 60 ? ` · ${elapsed}s after the update` : ''}</span>`;
+			// keep listening briefly for the files that follow the config
+			done = elapsed > 20 || /firmware/.test(files);
+		} else if (elapsed > 120) {
+			html = `<span class="badge badge-warning op-sync-badge">No fetch after 2 minutes</span><span class="small text-muted"> The phone may be offline, on a call it won't interrupt, or its provisioning is stuck. Check Activity, or try Reboot phone.</span>`;
+			done = true;
+		} else {
+			html = `<span class="badge badge-info op-sync-badge"><span class="op-spin"></span> ${watch.mode === 'push' ? 'Update request sent' : 'Saved; update sent'}, waiting for the phone… ${elapsed}s</span>${files ? `<span class="small text-muted"> got so far: ${esc(files)}</span>` : ''}`;
+		}
+		if (failed.length) html += `<div class="small text-danger">Errors: ${failed.map((e) => `${esc(e.path)} → ${e.status} ${esc(e.detail)}`).join('; ')}</div>`;
+		box.innerHTML = html;
+		if (!done && document.body.contains(box)) syncTimer = setTimeout(() => showSync(id, watch).catch(() => {}), 1500);
+	}
+
+	async function deviceEditor(id, opts = {}) {
 		await lookups();
 		const d = id ? await api('device.get', { device: id }) : {
 			mac: '', model: 'T87W', name: '', template_id: null, enabled: true, settings: {}, raw: {}, lines: [{ account: 1, extension: '' }], keys: [], line_keys: 84,
@@ -562,7 +620,7 @@
 				<div class="small mt-1">Overrides on this phone: <b>${nKeys}</b> key(s) · <b>${nSettings}</b> setting(s) · <b>${nRaw}</b> raw key(s). Everything else follows the template.</div>
 			</div>` : ''}
 			${d.render_error ? `<div class="alert alert-danger">${esc(d.render_error)}</div>` : ''}
-			${id && d.in_sync === false ? '<div class="alert alert-info">This phone has not fetched its latest configuration yet.</div>' : ''}
+			${id ? '<div id="op-sync" class="op-sync"></div>' : ''}
 			<div class="form-row">
 				<div class="form-group col-md-3"><label>MAC address</label><input class="form-control" id="op-mac" value="${esc(d.mac_pretty || d.mac)}" placeholder="c4:fc:22:1d:d6:37"></div>
 				<div class="form-group col-md-2"><label>Model</label><select class="form-control" id="op-model">${cache.models.map((m) => `<option value="${esc(m.id)}" ${m.id === d.model ? 'selected' : ''}>${esc(m.name)}${m.verified ? '' : ' *'}</option>`).join('')}</select></div>
@@ -639,16 +697,22 @@
 				}
 				return line;
 			}).filter((l) => l.extension !== '' || l.custom);
+			const before = id ? await api('device.sync', { device: id }) : null;
 			const saved = await api('device.save', {
 				id: id || undefined, mac: $('#op-mac').value, model: $('#op-model').value, name: $('#op-name').value,
 				template: $('#op-template').value || null, enabled: $('#op-enabled').value === '1',
 				lines, settings: readSettings(), raw: $('#op-raw').value, keys: readKeys(),
 			});
-			say('Saved. Phones affected by the change were told to update.');
-			deviceEditor(saved.id);
+			deviceEditor(saved.id, { watch: before ? { since: before.now, started: before.now, mode: 'save' } : null });
 		});
 		if (id) {
-			$('#op-push').onclick = (e) => guard(e.target, async () => report(await api('resync', { devices: [id] })));
+			showSync(id, opts.watch || null).catch(() => {});
+			$('#op-push').onclick = (e) => guard(e.target, async () => {
+				const before = await api('device.sync', { device: id });
+				const res = await api('resync', { devices: [id] });
+				if (!res[0] || !res[0].ok) return report(res);
+				showSync(id, { since: before.now, started: before.now, mode: 'push' });
+			});
 			$('#op-reboot').onclick = (e) => confirm('Reboot this phone now?') && guard(e.target, async () => report(await api('resync', { devices: [id], reboot: true })));
 			$('#op-rearm').onclick = (e) => confirm('Issue new credentials and accept the bootstrap credential until the phone fetches again?') && guard(e.target, async () => { await api('device.rearm', { device: id }); say('Re-armed'); deviceEditor(id); });
 			$('#op-delete').onclick = (e) => confirm('Delete this phone from OpenProv?') && guard(e.target, async () => { await api('device.delete', { device: id }); say('Deleted'); devices(); });

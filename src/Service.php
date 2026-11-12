@@ -272,6 +272,25 @@ class Service
 		return $hash === $d['notified_hash'] ? 'pending' : 'stale';
 	}
 
+	/**
+	 * Light status for live updates in the GUI: whether the phone has the
+	 * current config, when it last fetched, and its requests since $since.
+	 */
+	public function deviceSync($ref, int $since = 0): array
+	{
+		$d = $this->deviceRef($ref);
+		$events = array_values(array_filter($this->store->events(100, $d['mac']), fn($e) => (int) $e['ts'] >= $since));
+		usort($events, fn($a, $b) => [$a['ts'], $a['id'] ?? 0] <=> [$b['ts'], $b['id'] ?? 0]);
+		return [
+			'sync' => $this->syncState($d),
+			'last_seen' => (int) $d['last_seen'],
+			'last_ip' => $d['last_ip'],
+			'auto_resync' => (bool) $this->settings->get('auto_resync'),
+			'now' => time(),
+			'events' => array_map(fn($e) => ['ts' => (int) $e['ts'], 'ip' => $e['ip'], 'path' => $e['path'], 'status' => (int) $e['status'], 'detail' => $e['detail']], $events),
+		];
+	}
+
 	/** Phones whose lines include this extension (a user's own phones). */
 	public function devicesForExtension(string $ext): array
 	{

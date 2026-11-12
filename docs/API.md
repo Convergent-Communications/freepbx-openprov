@@ -36,6 +36,7 @@ arguments can be JSON (`devices='["c4fc221dd637"]'`).
 | `ringtones.builtin` | | Cached built-in ringtones per model: `{T87W: ["Ring1.wav", …]}` |
 | `ringtones.fetch` | `device` | Copy that phone's built-in ringtones into the PBX cache (through its web API, tunnel first), converted to 16-bit PCM WAV |
 | `ringtone.audio` | `ref, model?` | `{mime, data}` for listening. `ref` is `asset:<id>` (uploaded) or `Resource:<name>.wav` (built-in, from the cache) |
+| `device.sync` | `device, since?` | Live status: `{sync: current\|pending\|stale\|never\|error, last_seen, last_ip, auto_resync, now, events}`, with the phone's requests since `since` (server time). The GUI polls it after Save / Update phone now |
 | `device.screenshot` | `device` | The phone's current screen: `{mime, data (base64), host, ts}`. The PBX fetches `/screencapture` from the phone (through the tunnel for VPN phones). Needs the "Allow screenshots from the PBX" setting (on by default) to have reached the phone |
 | `keys.set` | `scope, ref, keys, bank?, replace?` | `scope` = `template`\|`device`. With `replace=false`, the keys given are merged slot by slot |
 | `keys.fill` | `scope, ref, extensions\|"all", start?, bank?, type?` | Fills consecutive BLF keys |

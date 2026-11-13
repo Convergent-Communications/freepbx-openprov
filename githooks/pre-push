@@ -1,0 +1,16 @@
+#!/bin/sh
+# Refuse to push an unsigned module to main (or a release tag): anyone who
+# installs it would see FreePBX's "unsigned" / "tampered" warning.
+# Enable once per clone:  git config core.hooksPath githooks
+top=$(git rev-parse --show-toplevel)
+zero=0000000000000000000000000000000000000000
+status=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+	[ "$local_sha" = "$zero" ] && continue
+	case "$remote_ref" in
+		refs/heads/main|refs/tags/v*)
+			"$top/bin/module-sign" check "$local_sha" || status=1
+			;;
+	esac
+done
+exit $status

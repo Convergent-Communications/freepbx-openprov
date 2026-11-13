@@ -26,7 +26,9 @@ class Openprov extends Command
 			->addOption('data', 'd', InputOption::VALUE_REQUIRED, 'JSON object of arguments ("-" reads stdin)')
 			->addOption('compact', 'c', InputOption::VALUE_NONE, 'Single-line JSON output')
 			->addOption('install', null, InputOption::VALUE_NONE, 'With "web": install/refresh the provisioning vhost (root)')
-			->addOption('uninstall', null, InputOption::VALUE_NONE, 'With "web": remove the provisioning vhost (root)');
+			->addOption('uninstall', null, InputOption::VALUE_NONE, 'With "web": remove the provisioning vhost (root)')
+			->addOption('remove', null, InputOption::VALUE_NONE, 'With "trust-key": stop trusting the release key (root)')
+			->addOption('status', null, InputOption::VALUE_NONE, 'With "trust-key": only show whether the release key is trusted');
 	}
 
 	protected function execute(InputInterface $input, OutputInterface $output)
@@ -40,6 +42,7 @@ class Openprov extends Command
 			foreach (Api::actions() as $name => $help) {
 				$output->writeln(str_pad($name, 18) . ' ' . $help);
 			}
+			$output->writeln(str_pad('trust-key', 18) . ' [--status|--remove] trust the release signing key so FreePBX shows OpenProv as signed (root; docs/SIGNING.md)');
 			return 0;
 		}
 		if ($action === 'web') {
@@ -55,6 +58,30 @@ class Openprov extends Command
 			}
 			$output->writeln(json_encode($svc->webStatus(), $flags));
 			return 0;
+		}
+
+		if ($action === 'trust-key') {
+			// Trust the key OpenProv's releases are signed with, so FreePBX
+			// shows it (and anything else signed with it) as signed. See
+			// docs/SIGNING.md.
+			$signing = new \FreePBX\modules\Openprov\Signing();
+			try {
+				if ($input->getOption('status')) {
+					$output->writeln(json_encode($signing->status(), $flags));
+					return 0;
+				}
+				if (posix_geteuid() !== 0) {
+					$output->writeln('<error>trust-key changes the system keyring: run it as root</error>');
+					return 1;
+				}
+				$r = $input->getOption('remove') ? $signing->untrust() : $signing->trust();
+				$r['modules'] = \FreePBX\modules\Openprov\Signing::afterChange();
+				$output->writeln(json_encode($r, $flags));
+				return 0;
+			} catch (\Throwable $e) {
+				$output->writeln('<error>' . $e->getMessage() . '</error>');
+				return 1;
+			}
 		}
 
 		$args = [];

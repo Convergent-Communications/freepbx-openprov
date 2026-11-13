@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""
+Sign this FreePBX module with the release key, and check signatures.
+
+  bin/module-sign sign          sign the committed tree, commit module.sig
+  bin/module-sign check [REV]   verify module.sig at REV (default HEAD)
+  bin/module-sign release       sign, tag v<version>, build dist/<rawname>-<version>.tgz
+
+module.sig is what FreePBX checks (admin/libraries/BMO/GPG.class.php): a
+clearsigned INI file with the sha256 of every file in the module. FreePBX
+trusts it once a system trusts the release key (fwconsole openprov
+trust-key); the key does not need Sangoma's signature. The format matches
+FreePBX devtools' sign.php, but this script needs no PHP and signs exactly
+what git ships: the files tracked at a commit, never the working tree.
+
+FreePBX skips hidden files (any path part starting with "."), so they are
+not listed. Signing asks for the key's passphrase every time.
+
+The same script is used in every module signed with this key; keep the
+copies identical.
+"""
+import hashlib
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+# The release key's primary fingerprint. A signature counts only if it was
+# made by this key (or one of its subkeys); keys/release-signing-key.asc
+# is the public key, shipped so systems can trust it offline.
+FINGERPRINT = "E40FA5E8A108D1B826408E0DB63E9EEEE8CDA76F"
+KEY_FILE = "keys/release-signing-key.asc"
+SIG = "module.sig"
+
+HEADER = """;################################################
+;#        FreePBX Module Signature File         #
+;################################################
+;# Do not alter the contents of this file!  If  #
+;# this file is tampered with, the module will  #
+;# fail validation and be marked as invalid!    #
+;################################################
+
+"""
+
+
+def git(*args, input=None, binary=False):
+    r = subprocess.run(["git", *args], input=input, capture_output=True, check=False)
+    if r.returncode != 0:
+        sys.exit(f"git {' '.join(args)} failed: {r.stderr.decode().strip()}")
+    return r.stdout if binary else r.stdout.decode()
+
+
+def fail(msg):
+    print(f"module-sign: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def shipped_files(rev):
+    """{path: sha256} for the files FreePBX will check at rev."""
+    out = {}
+    for entry in git("ls-tree", "-r", "-z", "--full-tree", rev, binary=True).split(b"\0"):
+        if not entry:
+            continue
+        meta, path = entry.split(b"\t", 1)
+        mode, kind, obj = meta.decode().split()
+        path = path.decode()
+        if path == SIG or any(part.startswith(".") for part in path.split("/")):
+            continue
+        if kind != "blob" or mode == "120000":
+            fail(f"{path}: symlinks and submodules can't be signed")
+        if re.search(r'[=;\[\]"{}|&~!()^$\n]', path):
+            fail(f"{path}: FreePBX reads module.sig as INI and can't handle this file name")
+        out[path] = hashlib.sha256(git("cat-file", "blob", obj, binary=True)).hexdigest()
+    return out
+
+
+def module_info(rev):
+    xml = git("show", f"{rev}:module.xml")
+    raw = re.search(r"<rawname>\s*([^<\s]+)\s*</rawname>", xml)
+    ver = re.search(r"<version>\s*([^<\s]+)\s*</version>", xml)
+    if not raw or not ver:
+        fail("module.xml has no <rawname> or <version>")
+    return raw.group(1), ver.group(1)
+
+
+def verify(rev, quiet=False):
+    """Check module.sig at rev against the files at rev. Returns a list of problems."""
+    for path in (SIG, KEY_FILE):
+        if subprocess.run(["git", "cat-file", "-e", f"{rev}:{path}"], capture_output=True).returncode != 0:
+            return [f"no {path} at {rev}"]
+    sig = git("show", f"{rev}:{SIG}", binary=True)
+    key = git("show", f"{rev}:{KEY_FILE}", binary=True)
+
+    with tempfile.TemporaryDirectory() as home:
+        env = dict(os.environ, GNUPGHOME=home)
+        subprocess.run(["gpg", "--batch", "--quiet", "--import"], input=key, env=env, capture_output=True, check=True)
+        r = subprocess.run(["gpg", "--batch", "--status-fd", "2", "--decrypt"], input=sig, env=env, capture_output=True)
+    status = r.stderr.decode(errors="replace")
+    problems = []
+    valid = [l.split() for l in status.splitlines() if l.startswith("[GNUPG:] VALIDSIG ")]
+    if not valid:
+        return [f"{SIG} signature doesn't verify:\n" + "\n".join(l for l in status.splitlines() if not l.startswith("[GNUPG:]"))]
+    if valid[0][-1] != FINGERPRINT:
+        problems.append(f"{SIG} is signed by {valid[0][-1]}, not the release key {FINGERPRINT}")
+    for bad in ("EXPKEYSIG", "REVKEYSIG", "BADSIG", "EXPSIG"):
+        if f"[GNUPG:] {bad}" in status:
+            problems.append(f"{SIG}: gpg reports {bad} (FreePBX rejects this)")
+
+    listed, section = {}, None
+    for line in r.stdout.decode().splitlines():
+        line = line.strip()
+        if not line or line.startswith(";"):
+            continue
+        if line.startswith("["):
+            section = line.strip("[]")
+        elif section == "hashes" and "=" in line:
+            path, h = (x.strip() for x in line.split("=", 1))
+            listed[path] = h
+    actual = shipped_files(rev)
+    for path in sorted(set(actual) | set(listed)):
+        if path not in listed:
+            problems.append(f"not signed: {path}")
+        elif path not in actual:
+            problems.append(f"signed but missing: {path}")
+        elif listed[path] != actual[path]:
+            problems.append(f"changed since signing: {path}")
+    return problems
+
+
+def cmd_check(rev="HEAD"):
+    sha = git("rev-parse", "--short", rev).strip()
+    problems = verify(rev)
+    if problems:
+        print(f"module-sign: {SIG} does not match {rev} ({sha}):", file=sys.stderr)
+        for p in problems[:20]:
+            print(f"  {p}", file=sys.stderr)
+        if len(problems) > 20:
+            print(f"  … and {len(problems) - 20} more", file=sys.stderr)
+        print("Run bin/module-sign sign to sign the committed tree.", file=sys.stderr)
+        return 1
+    rawname, version = module_info(rev)
+    print(f"module-sign: {rawname} {version} at {sha} is signed by the release key")
+    return 0
+
+
+def cmd_sign():
+    if git("diff", "--name-only", "HEAD", "--", ".", f":(exclude){SIG}").strip():
+        fail("commit your changes first: only committed files are signed")
+    if not verify("HEAD"):
+        print("module-sign: already signed, nothing to do")
+        return 0
+    rawname, version = module_info("HEAD")
+    files = shipped_files("HEAD")
+    body = HEADER + "[config]\nversion=2\nhash=sha256\n"
+    body += f"signedwith={FINGERPRINT}\nsignedby=module-sign\nrepo=manual\ntype=public\n[hashes]\n"
+    body += "".join(f"{p} = {h}\n" for p, h in sorted(files.items()))
+    body += ";# End\n"
+
+    env = dict(os.environ)
+    if sys.stdin.isatty():
+        env["GPG_TTY"] = os.ttyname(sys.stdin.fileno())
+    # Forget any cached passphrase so signing always asks for it.
+    subprocess.run(["gpg-connect-agent", "reloadagent", "/bye"], capture_output=True, env=env)
+    print(f"Signing {rawname} {version}: {len(files)} files. gpg will ask for the release key's passphrase.")
+    r = subprocess.run(["gpg", "--local-user", FINGERPRINT, "--clearsign"], input=body.encode(), capture_output=True, env=env)
+    if r.returncode != 0:
+        fail("gpg couldn't sign:\n" + r.stderr.decode())
+    with open(SIG, "wb") as f:
+        f.write(r.stdout)
+    git("add", SIG)
+    git("commit", "-q", "-m", f"Sign {rawname} {version}", "--", SIG)
+    return cmd_check("HEAD")
+
+
+def cmd_release():
+    rawname, version = module_info("HEAD")
+    tag = f"v{version}"
+    if subprocess.run(["git", "rev-parse", "-q", "--verify", f"refs/tags/{tag}"], capture_output=True).returncode == 0:
+        fail(f"{tag} already exists: bump <version> in module.xml first")
+    if cmd_sign() != 0:
+        return 1
+    git("tag", "-a", tag, "-m", f"{rawname} {version}")
+    os.makedirs("dist", exist_ok=True)
+    out = f"dist/{rawname}-{version}.tgz"
+    git("archive", "--format=tar.gz", f"--prefix={rawname}/", "-o", out, tag)
+    print(f"Tagged {tag} and built {out}.")
+    print(f"Publish: git push && git push origin {tag}, then attach {out} to the release.")
+    return 0
+
+
+def main(argv):
+    os.chdir(git("rev-parse", "--show-toplevel").strip())
+    if len(argv) >= 1 and argv[0] == "sign":
+        return cmd_sign()
+    if len(argv) >= 1 and argv[0] == "check":
+        return cmd_check(argv[1] if len(argv) > 1 else "HEAD")
+    if len(argv) >= 1 and argv[0] == "release":
+        return cmd_release()
+    print(__doc__.strip().split("\n\n")[1])
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

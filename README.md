@@ -21,8 +21,10 @@ built to be driven by people (GUI) and by software (CLI and GraphQL).
 cd /var/www/html/admin/modules
 git clone https://github.com/<you>/freepbx-openprov openprov
 fwconsole ma install openprov        # as root: also installs the HTTPS vhost (port 8443)
+fwconsole openprov trust-key         # as root, once per system: no "unsigned module" warning
 ```
 
+- **Signed releases:** `main` and every release tag are signed with the OpenProv release key, fingerprint `E40F A5E8 A108 D1B8 2640 8E0D B63E 9EEE E8CD A76F`. FreePBX warns about modules that aren't signed by Sangoma. `trust-key` tells it to trust this key instead. Skip it and OpenProv still works, with the warning. See [module signing](docs/SIGNING.md) for what it changes and how to undo it.
 - **Install as a non-root user?** Run `fwconsole openprov web --install` as root afterwards.
 - **FreePBX firewall:** installing adds a custom service, "OpenProv provisioning" (TCP 8443), to the zones in the `firewall_zones` setting (default internal and other; the VPN interface `tun0` is Internal). Add `external` only if phones provision over the internet without the VPN.
 
@@ -46,12 +48,16 @@ fwconsole ma install openprov        # as root: also installs the HTTPS vhost (p
 - [Adding phone models and settings](docs/ADDING-MODELS.md)
 - [Add-on features (e.g. captions softkey)](docs/FEATURES.md)
 - [Yealink VPN provisioning issue](docs/YEALINK-VPN-ISSUE.md)
+- [Module signing and releases](docs/SIGNING.md)
 
 ## Development
 
 ```sh
 php tests/run.php                  # no Composer needed
 rsync -a --exclude .git ./ root@pbx:/var/www/html/admin/modules/openprov/ && ssh root@pbx 'fwconsole chown'
+git config core.hooksPath githooks # once per clone: refuses to push an unsigned main
+bin/module-sign sign               # sign what's committed (asks for the release key passphrase)
+bin/module-sign release            # sign, tag v<version>, build dist/openprov-<version>.tgz
 ```
 
 ## License

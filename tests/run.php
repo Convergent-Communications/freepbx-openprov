@@ -996,6 +996,37 @@ $tests['dashboard: only simple settings can be allowed; remote reads never show 
 	eq('99887766', (new \FreePBX\modules\Openprov\Api($w->svc, 'admin'))->call('device.get', ['device' => MAC])['settings']['admin_password']);
 };
 
+$tests['signing: only the pinned release key is trusted; trust and untrust round-trip'] = function () {
+	$fpr = \FreePBX\modules\Openprov\Signing::FINGERPRINT;
+	// a scratch keyring, never the system's
+	$home = sys_get_temp_dir() . '/openprov-gpg-' . getmypid();
+	@mkdir($home, 0700);
+	$run = function (string $params, $stdin = null) use ($home) {
+		$p = proc_open('gpg --batch --no-tty --homedir ' . escapeshellarg($home) . " $params", [0 => $stdin ?: ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+		$out = stream_get_contents($pipes[1]);
+		$err = stream_get_contents($pipes[2]);
+		return ['stdout' => $out, 'stderr' => $err, 'status' => [], 'exitcode' => proc_close($p)];
+	};
+	try {
+		$s = new \FreePBX\modules\Openprov\Signing($run);
+		$k = $s->shippedKey();
+		eq($fpr, $k['fingerprint'], 'keys/release-signing-key.asc is the pinned key');
+		ok(str_contains($k['uid'], 'FreePBX module releases'));
+		eq(['fingerprint' => $fpr, 'imported' => false, 'trusted' => false], $s->status());
+		$r = $s->trust();
+		ok($r['imported'] && $r['trusted'], 'trusted after trust()');
+		ok(!$s->untrust()['imported'], 'gone after untrust()');
+		// a different key in the shipped file is refused before anything is imported
+		$fake = new \FreePBX\modules\Openprov\Signing(fn() => ['stdout' => "pub:-:4096:1:AAAA:1:::-:::cSC:\nfpr:::::::::0123456789ABCDEF0123456789ABCDEF01234567:\n", 'exitcode' => 0, 'status' => []]);
+		throws(fn() => $fake->trust(), 'pinned fingerprint');
+		$two = "pub:-:4096:1:AAAA:1:::-:::cSC:\nfpr:::::::::$fpr:\npub:-:4096:1:BBBB:1:::-:::cSC:\nfpr:::::::::0123456789ABCDEF0123456789ABCDEF01234567:\n";
+		eq(2, count(\FreePBX\modules\Openprov\Signing::primaryKeys($two)), 'a second key smuggled into the file is seen');
+		throws(fn() => (new \FreePBX\modules\Openprov\Signing(fn() => ['stdout' => $two, 'exitcode' => 0, 'status' => []]))->shippedKey(), 'pinned fingerprint');
+	} finally {
+		exec('rm -rf ' . escapeshellarg($home));
+	}
+};
+
 // ---- runner --------------------------------------------------------------------
 
 $filter = $argv[1] ?? '';

@@ -104,7 +104,9 @@ Verified through OpenProv over the VPN, by reading the phone's resource lists (`
 - **Backup and restore:**
   - `fwconsole backup --backupsingle=openprov --singlesaveto=<dir writable by asterisk>` produced 84 MB: all OpenProv tables (not the request log), `modulejson`, and the uploaded files.
   - A scratch template added afterwards was gone after `--restoresingle`.
-  - Every row of every table matched the backup, except the phone's own fetch in between.
+  - **The first run (2026-11-12) was wrong to report every row as matching.** FreePBX's `RestoreBase::importTables()` rewrites the two-character sequences `\n`, `\"` and `\'` in every value. That turned the Default template's escaped newlines (between its ringtone rules) into raw newlines, so its settings JSON no longer decoded, and the template read as empty: no ringtone rules, wallpaper, firmware or `{first}` labels. The check missed it because `mysql -B` prints a raw newline and `\n` the same way. The phone then fetched a config without the template's settings.
+  - Fix: `Restore::importTable()` inserts the rows byte for byte with prepared statements. Stored JSON that won't decode now fails the render (the phone gets a 500 and keeps its config) and the template editor, instead of quietly becoming defaults.
+  - Re-run 2026-11-13 with the fix, comparing rows through PDO: all six tables were byte-identical after `--restoresingle`, and the ringtone rules survived.
 - **Extension rename probe (FreePBX GUI):** a new Display Name changes `users.name`, `devices.description`, the SIP `callerid` ("Name <ext>"), AstDB `AMPUSER/<ext>/cidname` and the voicemail box name. User Management is untouched. OpenProv's `extension.update` changes exactly those (verified on 205, then restored).
   - Saving the GUI form also rewrites every other field on it. On 201 that cleared the legacy `recording=force` and wrote about 20 default AstDB keys. Both were restored from a snapshot.
   - Core's GraphQL `updateExtension` deletes and recreates the extension and its User Management user.

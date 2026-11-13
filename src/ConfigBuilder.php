@@ -73,6 +73,9 @@ class ConfigBuilder
 			if (!$t) {
 				break;
 			}
+			if (!empty($t['unreadable'])) {
+				throw new \RuntimeException("Template '{$t['name']}' has unreadable stored " . implode(' and ', $t['unreadable']) . ' (invalid JSON); fix the row or restore it before provisioning');
+			}
 			array_unshift($chain, $t);
 			$templateId = $t['parent_id'];
 		}
@@ -82,6 +85,9 @@ class ConfigBuilder
 	/** Friendly settings: schema defaults < template chain < device. */
 	public function effectiveSettings(array $device, bool $includeDevice = true): array
 	{
+		if ($includeDevice && !empty($device['unreadable'])) {
+			throw new \RuntimeException("Phone '{$device['mac']}' has unreadable stored " . implode(' and ', $device['unreadable']) . ' (invalid JSON); fix the row or restore it before provisioning');
+		}
 		$s = $this->catalog->schemaDefaults($device['brand']);
 		foreach ($this->templateChain($device['template_id']) as $t) {
 			$s = array_merge($s, array_map('strval', $t['settings']));

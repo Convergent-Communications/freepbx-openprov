@@ -130,6 +130,9 @@ class Service
 	public function getTemplate($ref): array
 	{
 		$t = $this->templateRef($ref);
+		if (!empty($t['unreadable'])) {
+			throw new \RuntimeException("Template '{$t['name']}' has unreadable stored " . implode(' and ', $t['unreadable']) . ' (invalid JSON); fix the row or restore it');
+		}
 		$t['keys'] = $this->store->keys('template', $t['id']);
 		// What this template inherits: the parent chain over the built-in
 		// defaults (the editor colours each field as inherited or set here).

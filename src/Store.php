@@ -48,8 +48,7 @@ class Store
 		}
 		$r['id'] = (int) $r['id'];
 		$r['parent_id'] = $r['parent_id'] === null ? null : (int) $r['parent_id'];
-		$r['settings'] = Util::jsonDecode($r['settings']);
-		$r['raw'] = Util::jsonDecode($r['raw']);
+		self::decodeJson($r, ['settings', 'raw']);
 		$r['updated_at'] = (int) $r['updated_at'];
 		return $r;
 	}
@@ -110,9 +109,24 @@ class Store
 		$r['template_id'] = $r['template_id'] === null ? null : (int) $r['template_id'];
 		$r['enabled'] = (bool) $r['enabled'];
 		$r['claimable'] = (bool) $r['claimable'];
-		$r['settings'] = Util::jsonDecode($r['settings']);
-		$r['raw'] = Util::jsonDecode($r['raw']);
+		self::decodeJson($r, ['settings', 'raw']);
 		return $r;
+	}
+
+	/**
+	 * Decode JSON columns. One that won't decode (e.g. a raw newline put in by
+	 * a foreign restore) becomes [] and is listed in $r['unreadable'], so the
+	 * config builder can refuse to render instead of silently sending defaults.
+	 */
+	private static function decodeJson(array &$r, array $cols): void
+	{
+		foreach ($cols as $c) {
+			$raw = $r[$c];
+			$r[$c] = Util::jsonDecode($raw);
+			if ($raw !== null && $raw !== '' && !is_array(json_decode((string) $raw, true))) {
+				$r['unreadable'][] = $c;
+			}
+		}
 	}
 
 	public function devices(): array

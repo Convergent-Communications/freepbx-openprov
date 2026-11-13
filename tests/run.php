@@ -948,6 +948,31 @@ $tests['service: null template and parent are accepted'] = function () {
 	eq(null, $t['parent_id']);
 };
 
+$tests['backup: restore puts JSON back byte for byte (FreePBX importTables would mangle \n and \")'] = function () {
+	if (!class_exists('FreePBX\modules\Backup\RestoreBase')) {
+		eval('namespace FreePBX\modules\Backup; class RestoreBase {}');
+	}
+	require_once dirname(__DIR__) . '/Restore.php';
+	$w = world();
+	$t = $w->svc->saveTemplate(['name' => 'Rings', 'description' => 'say "hi"', 'settings' => ['distinctive_ring' => "cl=Resource:Ring2.wav\ncp=Resource:Ring3.wav", 'label_format' => '{first}']]);
+	$rows = $w->db->query('SELECT * FROM openprov_templates')->fetchAll(PDO::FETCH_ASSOC);
+	$backup = json_decode(json_encode($rows), true);   // what the backup file holds
+	$w->db->exec('DELETE FROM openprov_templates');
+	\FreePBX\modules\Openprov\Restore::importTable($w->db, 'openprov_templates', array_map(fn($r) => $r + ['gone_column' => 'x'], $backup));
+	eq($rows, $w->db->query('SELECT * FROM openprov_templates')->fetchAll(PDO::FETCH_ASSOC));
+	eq("cl=Resource:Ring2.wav\ncp=Resource:Ring3.wav", $w->svc->getTemplate($t['id'])['settings']['distinctive_ring']);
+	\FreePBX\modules\Openprov\Restore::importTable($w->db, 'users', []);   // never touches other modules' tables
+};
+
+$tests['render: unreadable stored settings refuse to render instead of sending defaults'] = function () {
+	$w = world();
+	$t = $w->svc->saveTemplate(['name' => 'Broken', 'settings' => ['label_format' => '{first}']]);
+	phone($w, ['template' => $t['id']]);
+	$w->db->prepare('UPDATE openprov_templates SET settings=? WHERE id=?')->execute(["{\"distinctive_ring\":\"a=1\nb=2\"}", $t['id']]);
+	throws(fn() => $w->builder->render($w->store->deviceByMac(MAC)), 'unreadable');
+	throws(fn() => $w->svc->getTemplate($t['id']), 'unreadable');
+};
+
 // ---- runner --------------------------------------------------------------------
 
 $filter = $argv[1] ?? '';

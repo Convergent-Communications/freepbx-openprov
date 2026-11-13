@@ -901,6 +901,12 @@ $tests['dashboard policy: remote callers change only what OpenProv allows'] = fu
 	eq(['blf', 'xml'], array_column($w->store->keys('device', $w->store->deviceByMac(MAC)['id']), 'type'));
 	throws(fn() => $r->call('keys.set', ['scope' => 'device', 'ref' => MAC, 'keys' => [['position' => 2, 'type' => 'blf', 'value' => '201'], ['position' => 9, 'type' => 'xml', 'value' => 'http://evil', 'label' => 'App']]]), "key type 'xml'");
 	throws(fn() => $r->call('keys.set', ['scope' => 'template', 'ref' => 'Base', 'keys' => []]), 'templates');
+	// a managed key's line (account) counts as part of it: sending it back on another line is a change
+	$w->svc->setKeys('device', MAC, [['position' => 9, 'type' => 'xml', 'value' => 'http://x/app', 'label' => 'App', 'account' => 2]], null, false);
+	throws(fn() => $r->call('keys.set', ['scope' => 'device', 'ref' => MAC, 'keys' => $keys]), "key type 'xml'");
+	$keys[1]['account'] = 2;
+	$r->call('keys.set', ['scope' => 'device', 'ref' => MAC, 'keys' => $keys]);
+	eq(2, $w->store->keys('device', $w->store->deviceByMac(MAC)['id'])[1]['account']);
 	// settings: none allowed, then one
 	throws(fn() => $r->call('device.save', ['mac' => MAC, 'settings' => ['backlight_time' => '60']]), "setting 'backlight_time'");
 	throws(fn() => $r->call('device.save', ['mac' => MAC, 'raw' => 'x = 1']), 'only phone settings');

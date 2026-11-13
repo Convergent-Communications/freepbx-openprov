@@ -390,7 +390,8 @@ class Service
 				foreach ($this->store->keys('device', $d['id']) as $k) {
 					$existing[$k['bank'] . '/' . $k['position']] = $k;
 				}
-				$same = fn(array $x, ?array $y) => $y && ($x['type'] ?? '') === $y['type'] && (string) ($x['value'] ?? '') === $y['value'] && (string) ($x['label'] ?? '') === $y['label'];
+				$same = fn(array $x, ?array $y) => $y && ($x['type'] ?? '') === $y['type'] && (string) ($x['value'] ?? '') === $y['value'] && (string) ($x['label'] ?? '') === $y['label']
+					&& max(1, (int) ($x['account'] ?? 1)) === (int) $y['account'];
 				$incoming = [];
 				foreach ((array) ($a['keys'] ?? []) as $k) {
 					$k = (array) $k;
@@ -410,7 +411,7 @@ class Service
 							continue;
 						}
 						$in = $incoming[$k['bank'] . '/' . $k['position']] ?? null;
-						if (!$in || ($in['type'] ?? '') !== $k['type'] || (string) ($in['value'] ?? '') !== $k['value'] || (string) ($in['label'] ?? '') !== $k['label']) {
+						if (!$in || !$same($in, $k)) {
 							$deny("key {$k['position']} ({$k['type']}) is managed on the PBX");
 						}
 					}

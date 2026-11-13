@@ -105,7 +105,7 @@
 				<button class="btn btn-default" id="op-export">Export CSV</button>
 				<label class="btn btn-default mb-0">Import CSV <input type="file" id="op-import" accept=".csv,text/csv" hidden></label>
 			</div>
-			<table class="table table-striped table-sm op-table">
+			<table class="table table-bordered table-striped table-sm op-table">
 				<thead><tr><th>Name</th><th>MAC</th><th>Model</th><th>Template</th><th>Extensions</th><th>Firmware</th><th>Last fetch</th><th></th><th></th></tr></thead>
 				<tbody>${rows || '<tr><td colspan="9" class="text-muted">No phones yet. Add one, or adopt one from the Discover tab.</td></tr>'}</tbody>
 			</table>
@@ -374,12 +374,12 @@
 				<td><select class="form-control form-control-sm" data-k="type">${keyTypeOptions(k.type, from)}</select></td>
 				<td><input class="form-control form-control-sm" data-k="value" value="${esc(k.value)}" list="op-targets"></td>
 				<td><input class="form-control form-control-sm" data-k="label" value="${esc(k.label)}" placeholder="auto from name"></td>
-				<td><input class="form-control form-control-sm" data-k="account" type="number" min="1" max="16" value="${esc(k.account || 1)}" style="width:5em"></td></tr>`;
+				<td><input class="form-control form-control-sm" data-k="account" type="number" min="1" max="16" value="${byPos[p] ? esc(k.account || 1) : ''}" placeholder="${esc(t ? t.account || 1 : 1)}" title="Which of the phone's accounts (Lines above) a Line key is for" style="width:5em"></td></tr>`;
 		}
 		const head = from
 			? `<th>#</th><th>From the ${from}</th><th>This ${isDevice ? 'phone' : 'template'}</th><th>Value</th><th>Label</th><th>Line</th>`
 			: '<th>#</th><th>Type</th><th>Value</th><th>Label</th><th>Line</th>';
-		return `<table class="table table-sm table-striped table-hover op-keys" data-bank="${bank}"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+		return `<table class="table table-bordered table-sm table-striped table-hover op-keys" data-bank="${bank}"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
 	}
 
 	function keysToolbar(count, isDevice, inherits = isDevice) {
@@ -436,6 +436,24 @@
 		$('#op-fill-all').onclick = (e) => { e.preventDefault(); fillGrid(cache.extensions.map((x) => x.extension), start(), exclude); };
 		$$('.op-keys select, .op-keys input').forEach((el) => el.addEventListener('change', () => el.closest('tr').classList.add('op-changed')));
 		wireDrag();
+		// The Line box only counts on a key of this row's own: changing it on a
+		// row that follows the template copies the template's key here with the
+		// new line (a blank row becomes a line key), so it saves instead of
+		// being dropped.
+		$$('.op-keys [data-k="account"]').forEach((inp) => (inp.onchange = () => {
+			const tr = inp.closest('tr');
+			const typeSel = tr.querySelector('[data-k="type"]');
+			if (typeSel.value !== '' && typeSel.value !== 'none') return;
+			const t = inherits(tr) ? rowTpl(tr) : null;
+			const base = t && !isEmpty(t) ? t : { type: 'line', value: '', label: '' };
+			typeSel.value = base.type;
+			tr.querySelector('[data-k="value"]').value = base.value ?? '';
+			tr.querySelector('[data-k="label"]').value = base.label ?? '';
+			if (inherits(tr)) {
+				tr.classList.toggle('op-override', true);
+				tr.classList.toggle('op-inherited', false);
+			}
+		}));
 		// Picking a known target fills the type for you.
 		$$('.op-keys [data-k="value"]').forEach((inp) => (inp.onchange = () => {
 			const t = cache.targets.find((x) => x.value === inp.value);
@@ -476,7 +494,7 @@
 		tr.querySelector('[data-k="type"]').value = own.type;
 		tr.querySelector('[data-k="value"]').value = own.value ?? '';
 		tr.querySelector('[data-k="label"]').value = own.label ?? '';
-		tr.querySelector('[data-k="account"]').value = own.account || 1;
+		tr.querySelector('[data-k="account"]').value = own.type === '' ? '' : own.account || 1;
 		if (inherits(tr)) {
 			tr.classList.toggle('op-override', own.type !== '');
 			tr.classList.toggle('op-inherited', own.type === '' && !!t && !isEmpty(t));
@@ -631,7 +649,7 @@
 				<div class="form-group col-md-1"><label>Enabled</label><select class="form-control" id="op-enabled"><option value="1">Yes</option><option value="0" ${d.enabled ? '' : 'selected'}>No</option></select></div>
 			</div>
 			<h4>Lines</h4>
-			<table class="table table-sm table-striped" id="op-lines"><thead><tr><th>Account</th><th>Extension</th><th>Label</th><th></th></tr></thead><tbody>${lineRows}</tbody></table>
+			<table class="table table-bordered table-sm table-striped" id="op-lines"><thead><tr><th>Account</th><th>Extension</th><th>Label</th><th></th></tr></thead><tbody>${lineRows}</tbody></table>
 			<button class="btn btn-sm btn-default" id="op-add-line">Add line</button>
 			<ul class="nav nav-tabs mt-3" id="op-subtabs">
 				<li class="nav-item"><a class="nav-link active" href="#" data-sub="keys">Keys</a></li>
@@ -744,7 +762,7 @@
 		const byId = Object.fromEntries(cache.templates.map((t) => [t.id, t]));
 		main.innerHTML = `
 			<div class="op-toolbar"><button class="btn btn-primary" id="op-add-tpl">Add template</button></div>
-			<table class="table table-striped table-sm op-table"><thead><tr><th>Name</th><th>Inherits from</th><th>Description</th><th>Phones</th></tr></thead>
+			<table class="table table-bordered table-striped table-sm op-table"><thead><tr><th>Name</th><th>Inherits from</th><th>Description</th><th>Phones</th></tr></thead>
 			<tbody>${cache.templates.map((t) => `<tr><td><a href="#" data-edit-tpl="${t.id}">${esc(t.name)}</a></td><td>${esc(t.parent_id ? byId[t.parent_id]?.name : '—')}</td><td>${esc(t.description)}</td><td>${t.devices}</td></tr>`).join('')}</tbody></table>
 			<p class="text-muted small">Set phones up here: keys, settings and files live on templates. A template can inherit from another (built-in defaults &rarr; parent &rarr; template), and each phone only stores the few things that differ from its template.</p>`;
 		$('#op-add-tpl').onclick = () => templateEditor(null);
@@ -811,7 +829,7 @@
 		main.innerHTML = `
 			<p class="text-muted small">Add-on features add things like custom softkeys to phones. Define one here, then switch it <b>On</b> in a template or phone (Settings &rarr; Add-on features). Each feature keeps its own softkey number and hidden line key, so features never collide. <b>Off</b> removes it from phones; blank leaves them alone.</p>
 			<div class="op-toolbar"><button class="btn btn-primary" id="op-add-feature">Add feature</button></div>
-			<table class="table table-striped table-sm op-table"><thead><tr><th>Feature</th><th>Id</th><th>Type</th><th>Slot</th><th>Needs</th><th>Used by</th><th></th></tr></thead><tbody>
+			<table class="table table-bordered table-striped table-sm op-table"><thead><tr><th>Feature</th><th>Id</th><th>Type</th><th>Slot</th><th>Needs</th><th>Used by</th><th></th></tr></thead><tbody>
 			${list.map((f) => `<tr>
 				<td><a href="#" data-edit-feature="${esc(f.id)}"><b>${esc(f.name)}</b></a><div class="small text-muted">${esc(f.description)}</div></td>
 				<td><code>${esc(f.id)}</code></td>
@@ -908,7 +926,7 @@
 				<button class="btn btn-primary">Upload</button>
 			</form>
 			<p class="small text-muted">Wallpapers are cropped and resized for each model's screen automatically. Assign files in a template or phone (Settings → Display / Audio / Provisioning).</p>
-			<table class="table table-striped table-sm op-table"><thead><tr><th>Kind</th><th>Name</th><th>Version</th><th>Model</th><th>Size</th><th>SHA-256</th><th></th></tr></thead>
+			<table class="table table-bordered table-striped table-sm op-table"><thead><tr><th>Kind</th><th>Name</th><th>Version</th><th>Model</th><th>Size</th><th>SHA-256</th><th></th></tr></thead>
 			<tbody>${list.map((a) => `<tr><td>${esc(a.kind)}</td><td>${esc(a.name)}</td><td>${esc(a.version)}</td><td>${esc(a.model)}</td><td>${size(a.size)}</td><td><code class="small">${esc(a.sha256.slice(0, 16))}…</code></td><td>${a.kind === 'ringtone' ? `<button class="btn btn-sm btn-default" data-play-ref="asset:${a.id}" title="Listen">&#9654;</button> ` : ''}<button class="btn btn-sm btn-link text-danger" data-del-asset="${a.id}">delete</button></td></tr>`).join('') || '<tr><td colspan="7" class="text-muted">No files yet.</td></tr>'}</tbody></table>
 			<h4 class="mt-4">Built-in ringtones</h4>
 			<p class="small text-muted">Yealink's own ringtones can't ship with OpenProv, so they're copied from one of your phones (one per model) and kept on this PBX for listening. Templates and phones refer to them by name, e.g. <code>Resource:Ring6.wav</code>.</p>
@@ -958,7 +976,7 @@
 		main.innerHTML = `
 			<p class="text-muted">Phones that asked this server for a configuration but are not set up yet, and Yealink phones registered to the PBX that OpenProv does not manage.
 			Point new phones at <code>${esc((await api('info')).bootstrap_url)}</code> with the bootstrap credentials from Settings (DHCP option 66 or Yealink RPS).</p>
-			<table class="table table-striped table-sm op-table"><thead><tr><th>MAC</th><th>Model</th><th>IP</th><th>Seen</th><th>Source</th><th>Extension</th><th>Template</th><th></th></tr></thead>
+			<table class="table table-bordered table-striped table-sm op-table"><thead><tr><th>MAC</th><th>Model</th><th>IP</th><th>Seen</th><th>Source</th><th>Extension</th><th>Template</th><th></th></tr></thead>
 			<tbody>${list.map((p, i) => `<tr data-i="${i}"><td><code>${esc(p.mac_pretty || '?')}</code></td><td>${esc(p.model || '?')}</td><td>${esc(p.ip)}</td><td>${ago(p.last_seen)}</td><td>${esc(p.source)}</td>
 				<td><select class="form-control form-control-sm" data-adopt-ext><option value="">—</option>${cache.extensions.map((x) => `<option value="${esc(x.extension)}" ${x.extension === p.extension ? 'selected' : ''}>${esc(x.extension + ' ' + x.name)}</option>`).join('')}</select></td>
 				<td><select class="form-control form-control-sm" data-adopt-tpl>${cache.templates.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></td>
@@ -976,7 +994,7 @@
 
 	// ---- activity ------------------------------------------------------------
 	function eventsTable(list) {
-		return `<table class="table table-sm table-striped op-table"><thead><tr><th>Time</th><th>MAC</th><th>IP</th><th>Request</th><th>Status</th><th>Detail</th></tr></thead><tbody>${list.map((e) =>
+		return `<table class="table table-bordered table-sm table-striped op-table"><thead><tr><th>Time</th><th>MAC</th><th>IP</th><th>Request</th><th>Status</th><th>Detail</th></tr></thead><tbody>${list.map((e) =>
 			`<tr class="${e.status >= 400 ? 'table-warning' : ''}"><td class="text-nowrap">${new Date(e.ts * 1000).toLocaleString()}</td><td><code>${esc(e.mac)}</code></td><td>${esc(e.ip)}</td><td>${esc(e.path)}</td><td>${e.status}</td><td>${esc(e.detail)}</td></tr>`).join('') || '<tr><td colspan="6" class="text-muted">No activity.</td></tr>'}</tbody></table>`;
 	}
 	async function events() {
@@ -1035,7 +1053,7 @@
 			<button class="btn btn-primary" id="op-gs-save">Save settings</button>
 			<hr><h4>Phone models</h4>
 			<p class="small text-muted">Brands: Yealink. Each model is a JSON file in <code>models/yealink/</code> (see docs/ADDING-MODELS.md); other brands need a brand driver (<code>src/Brand</code>). Unverified models use vendor data and haven't been checked on hardware.</p>
-			<table class="table table-sm table-striped op-table"><thead><tr><th>Brand</th><th>Model</th><th>Line keys</th><th>Accounts</th><th>Expansion</th><th>Wallpaper</th><th>Verified</th><th>Notes</th></tr></thead>
+			<table class="table table-bordered table-sm table-striped op-table"><thead><tr><th>Brand</th><th>Model</th><th>Line keys</th><th>Accounts</th><th>Expansion</th><th>Wallpaper</th><th>Verified</th><th>Notes</th></tr></thead>
 			<tbody>${(await lookups()).models.map((m) => `<tr><td>${esc(m.brand)}</td><td>${esc(m.id)}</td><td>${m.lineKeys}</td><td>${m.accounts}</td><td>${m.expansion ? `${m.expansion.modules} × ${m.expansion.keysPerModule}` : '—'}</td><td>${m.wallpaper ? `${m.wallpaper.width}×${m.wallpaper.height}` : '—'}</td><td>${m.verified ? '<span class="badge badge-success">yes</span>' : '<span class="text-muted">no</span>'}</td><td class="small">${m.quirks?.vpnBlocksProvisioning ? '<span class="badge badge-warning">VPN: provisions through the tunnel</span> ' : ''}${m.verified ? esc(m.notes || '') : ''}</td></tr>`).join('')}</tbody></table>
 			<hr><h4>Import from Endpoint Manager</h4>
 			<p class="small text-muted">Copies EPM extension mappings (MAC, extension, VPN client) into OpenProv. EPM model names can be mapped, e.g. <code>{"SIP-T57W":"T87W"}</code> for phones that were set up as a stand-in model.</p>

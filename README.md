@@ -19,7 +19,7 @@ built to be driven by people (GUI) and by software (CLI and GraphQL).
 
 ```sh
 cd /var/www/html/admin/modules
-git clone https://github.com/<you>/freepbx-openprov openprov
+git clone https://github.com/Convergent-Communications/freepbx-openprov openprov
 fwconsole ma install openprov        # as root: also installs the HTTPS vhost (port 8443)
 fwconsole openprov trust-key         # as root, once per system: no "unsigned module" warning
 ```

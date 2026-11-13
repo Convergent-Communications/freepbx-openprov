@@ -8,7 +8,7 @@
 	<licenselink>https://www.gnu.org/licenses/gpl-3.0.txt</licenselink>
 	<category>Connectivity</category>
 	<description>Open-source phone provisioning for FreePBX. Renders Yealink configs on demand over HTTPS with per-device credentials, maps users and feature codes onto line keys, pushes System Admin VPN profiles, wallpapers, ringtones and firmware, and re-syncs phones automatically when their configuration changes. Drivable from the GUI, fwconsole and GraphQL.</description>
-	<more-info>https://github.com/convergent/freepbx-openprov</more-info>
+	<more-info>https://github.com/Convergent-Communications/freepbx-openprov</more-info>
 	<changelog>
 		*0.1.0* Initial release.
 	</changelog>

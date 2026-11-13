@@ -660,7 +660,7 @@
 			${id && d.effective && d.effective.features && Object.keys(d.effective.features).length ? `<div class="small text-muted mb-2">Add-on features: ${Object.entries(d.effective.features).map(([f, sl]) => `<b>${esc(f)}</b> (${Object.entries(sl).map(([k, n]) => (k.startsWith('softkey') ? 'softkey ' : 'hidden key ') + n).join(', ')})`).join(' · ')}</div>` : ''}
 			${id ? '<div id="op-sync" class="op-sync"></div>' : ''}
 			<div class="form-row">
-				<div class="form-group col-md-3"><label>MAC address</label><input class="form-control" id="op-mac" value="${esc(d.mac_pretty || d.mac)}" placeholder="c4:fc:22:1d:d6:37"></div>
+				<div class="form-group col-md-3"><label>MAC address</label><input class="form-control" id="op-mac" value="${esc(d.mac_pretty || d.mac)}" placeholder="c4:fc:22:a1:b2:c3"></div>
 				<div class="form-group col-md-2"><label>Model</label><select class="form-control" id="op-model">${cache.models.map((m) => `<option value="${esc(m.id)}" ${m.id === d.model ? 'selected' : ''}>${esc(m.name)}${m.verified ? '' : ' *'}</option>`).join('')}</select></div>
 				<div class="form-group col-md-3"><label>Name</label><input class="form-control" id="op-name" value="${esc(d.name)}" placeholder="defaults to the first line"></div>
 				<div class="form-group col-md-3"><label>Template</label><select class="form-control" id="op-template"><option value="">(none)</option>${cache.templates.map((t) => `<option value="${t.id}" ${t.id === d.template_id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></div>

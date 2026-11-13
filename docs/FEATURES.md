@@ -7,17 +7,17 @@ Features come from two places:
 - **The Features tab (custom).** No files are needed, and they're stored in the database (`openprov_features`):
   - **Softkey that opens a URL:** a label, a URL (`{ext}`, `{pbx}`, `{mac}`) and the screens to show it on.
   - **Advanced:** any config lines, removal lines, global switches, variables, and an optional hidden key and softkey.
-- **Built-in:** JSON files in `models/<brand>/features/`. They ship with the module, so the GUI can't edit or delete them. None ship today: the captions softkey is defined in the Features tab (below).
+- **Built-in:** JSON files in `models/<brand>/features/`. They ship with the module, so the GUI can't edit or delete them. None ship today.
 
 OpenProv turns each feature into ordinary settings (Settings → **Add-on features**), so templates, phone overrides and inheritance work as they do for everything else.
 
-**Captions** (lab and beta) is a custom "Softkey that opens a URL" feature:
+**Example:** a "Captions" softkey that, during a call, opens a page your own service serves for the phone's extension. Define it in the Features tab as a "Softkey that opens a URL":
 
 - id `captions`, softkey label `Captions`
-- URL `http://{pbx}:18990/captions/{ext}`
+- URL `http://{pbx}:8080/captions/{ext}` (any URL the phone can reach; the page should check who is asking)
 - shown during a call
 
-It holds slot 1 (softkey 1, hidden key 84 on the T87W). The file format below is the same one the built-in loader reads; the Features tab's Advanced mode takes the same fields.
+The first feature gets slot 1 (softkey 1, hidden key 84 on the T87W). The file format below is the same one the built-in loader reads; the Features tab's Advanced mode takes the same fields.
 
 ## Settings each feature gets
 
@@ -37,7 +37,7 @@ It holds slot 1 (softkey 1, hidden key 84 on the T87W). The file format below is
  "description": "…",
  "requires": ["edk", "xml_browser"],
  "claims": {"lineKey": 1, "softkey": 1},
- "variables": [{"id": "url", "label": "…", "default": "http://{pbx}:18990/captions/{ext}"}],
+ "variables": [{"id": "url", "label": "…", "default": "http://{pbx}:8080/captions/{ext}"}],
  "globals": {"features.enhanced_dss_keys.enable": "1"},
  "lines":  {"linekey.{lineKey}.type": "27", "softkey.{softkey}.action": "$KLineKey{lineKey}$"},
  "remove": {"linekey.{lineKey}.type": "0", "softkey.{softkey}.enable": "0"}

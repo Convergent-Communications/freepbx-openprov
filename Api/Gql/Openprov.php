@@ -17,7 +17,7 @@ use GraphQLRelay\Relay;
  *   query { openprovDevices { mac model name inSync lines { account extension } } }
  *   query { openprovQuery(action: "targets") }                     # JSON string
  *   mutation { openprovAction(input: { action: "keys.fill",
- *              args: "{\"scope\":\"device\",\"ref\":\"c4fc221dd637\",\"extensions\":[\"201\"]}" })
+ *              args: "{\"scope\":\"device\",\"ref\":\"c4fc22a1b2c3\",\"extensions\":[\"201\"]}" })
  *              { status message result } }
  */
 class Openprov extends Base

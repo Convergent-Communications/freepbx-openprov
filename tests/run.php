@@ -224,13 +224,13 @@ function world(): object
 	return (object) compact('db', 'settings', 'store', 'catalog', 'pbx', 'vpn', 'assets', 'builder', 'svc', 'server', 'sent', 'dir');
 }
 
-const UA = 'Yealink SIP-T87W 185.87.0.37 c4:fc:22:1d:d6:37';
-const MAC = 'c4fc221dd637';
+const UA = 'Yealink SIP-T87W 185.87.0.37 c4:fc:22:a1:b2:c3';
+const MAC = 'c4fc22a1b2c3';
 
 function phone(object $w, array $extra = []): array
 {
 	$tpl = $w->svc->saveTemplate(['name' => 'Base', 'settings' => ['label_format' => '{first}'], 'keys' => [['position' => 1, 'type' => 'line', 'account' => 1]]]);
-	return $w->svc->saveDevice($extra + ['mac' => 'C4:FC:22:1D:D6:37', 'model' => 'T87W', 'template' => $tpl['id'], 'lines' => [['account' => 1, 'extension' => '212']]]);
+	return $w->svc->saveDevice($extra + ['mac' => 'C4:FC:22:A1:B2:C3', 'model' => 'T87W', 'template' => $tpl['id'], 'lines' => [['account' => 1, 'extension' => '212']]]);
 }
 
 function kv(string $cfg): array
@@ -250,10 +250,10 @@ function kv(string $cfg): array
 $tests = [];
 
 $tests['util: mac normalisation'] = function () {
-	eq('c4fc221dd637', Util::mac('C4:FC:22:1D:D6:37'));
-	eq('c4fc221dd637', Util::mac('c4-fc-22-1d-d6-37'));
-	eq(null, Util::mac('c4fc221dd6'));
-	eq('c4:fc:22:1d:d6:37', Util::macPretty('C4FC221DD637'));
+	eq('c4fc22a1b2c3', Util::mac('C4:FC:22:A1:B2:C3'));
+	eq('c4fc22a1b2c3', Util::mac('c4-fc-22-a1-b2-c3'));
+	eq(null, Util::mac('c4fc22a1b2'));
+	eq('c4:fc:22:a1:b2:c3', Util::macPretty('C4FC22A1B2C3'));
 };
 
 $tests['util: label formats'] = function () {
@@ -367,7 +367,7 @@ $tests['render: accounts, labels, keys, %NULL% clearing'] = function () {
 	eq('United States-Eastern Time', $kv['local_time.time_zone_name']);
 	eq(['admin:24681357', 'user:1357'], $kv['static.security.user_password']);
 	eq('https://192.0.2.10:8443', $kv['static.auto_provision.server.url']);
-	eq('c4fc221dd637', $kv['static.auto_provision.server.username']);
+	eq('c4fc22a1b2c3', $kv['static.auto_provision.server.username']);
 	eq('0', $kv['static.auto_provision.custom.protect'], 'server wins over phone-side edits');
 };
 
@@ -396,9 +396,9 @@ $tests['server: bootstrap gets only a credential; claim; per-device credentials'
 	$w = world();
 	$d = phone($w, ['settings' => ['vpn' => 'auto']]);
 	$old = $w->store->deviceByMac(MAC)['prov_pass'];
-	eq(401, $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', null, null)['status']);
-	eq(401, $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', 'boot', 'wrong')['status']);
-	$r = $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', 'boot', 'bootpass');
+	eq(401, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', null, null)['status']);
+	eq(401, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', 'boot', 'wrong')['status']);
+	$r = $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', 'boot', 'bootpass');
 	eq(200, $r['status'], 'bootstrap works while claimable');
 	$pass = $w->store->deviceByMac(MAC)['prov_pass'];
 	ok($pass !== $old, 'a fresh device credential per bootstrap answer');
@@ -408,17 +408,17 @@ $tests['server: bootstrap gets only a credential; claim; per-device credentials'
 		ok(!str_contains($r['body'], $secret), "bootstrap answer has no $secret");
 	}
 	ok(str_contains($r['body'], 'server.url = https://192.0.2.10'), 'direct URL, not the VPN tunnel');
-	eq(401, $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', MAC, $old)['status'], 'the earlier credential is dead');
-	eq(403, $w->server->handle('/c4fc221dd637-vpn.tar', UA, '192.0.2.50', 'boot', 'bootpass')['status'], 'no VPN profile for bootstrap');
+	eq(401, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', MAC, $old)['status'], 'the earlier credential is dead');
+	eq(403, $w->server->handle('/c4fc22a1b2c3-vpn.tar', UA, '192.0.2.50', 'boot', 'bootpass')['status'], 'no VPN profile for bootstrap');
 	ok($w->store->deviceByMac(MAC)['claimable'], 'still claimable until the phone uses its own creds');
-	$full = $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', MAC, $pass);
+	$full = $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', MAC, $pass);
 	eq(200, $full['status']);
 	ok(str_contains($full['body'], 'account.1.password'), 'full config with its own credential');
 	ok(!$w->store->deviceByMac(MAC)['claimable'], 'claimed');
-	eq(404, $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', 'boot', 'bootpass')['status'], 'claimed looks like unknown to bootstrap');
+	eq(404, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', 'boot', 'bootpass')['status'], 'claimed looks like unknown to bootstrap');
 	eq('185.87.0.37', $w->store->deviceByMac(MAC)['last_fw']);
 	$w->svc->rearmDevice(MAC, false);
-	eq(200, $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', 'boot', 'bootpass')['status'], 're-armed');
+	eq(200, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', 'boot', 'bootpass')['status'], 're-armed');
 };
 
 $tests['security: remote API never reveals secrets or reads server files; settings reject injection'] = function () {
@@ -453,16 +453,16 @@ $tests['security: failed requests are logged at most once a minute; Discover nee
 $tests['server: user-agent MAC, allow-list, unknown devices, paths'] = function () {
 	$w = world();
 	phone($w);
-	eq(403, $w->server->handle('/c4fc221dd637.cfg', 'Yealink SIP-T87W 185.87.0.37 c4:fc:22:1d:d6:38', '192.0.2.50', 'boot', 'bootpass')['status']);
+	eq(403, $w->server->handle('/c4fc22a1b2c3.cfg', 'Yealink SIP-T87W 185.87.0.37 c4:fc:22:a1:b2:c4', '192.0.2.50', 'boot', 'bootpass')['status']);
 	eq(404, $w->server->handle('/001565000001.cfg', 'Yealink SIP-T87W 185.87.0.37 00:15:65:00:00:01', '192.0.2.51', 'boot', 'bootpass')['status']);
 	$disc = $w->svc->discovered();
 	eq('001565000001', $disc[0]['mac']);
 	eq('T87W', $disc[0]['model']);
-	eq(404, $w->server->handle('/c4fc221dd637.boot', UA, '192.0.2.50', null, null)['status']);
+	eq(404, $w->server->handle('/c4fc22a1b2c3.boot', UA, '192.0.2.50', null, null)['status']);
 	eq(200, $w->server->handle('/y000000000197.cfg', UA, '192.0.2.50', 'boot', 'bootpass')['status']);
 	eq(400, $w->server->handle('/a/wallpaper/1/../../etc/passwd', UA, '192.0.2.50', MAC, 'x')['status']);
 	$w->settings->set('allowed_networks', '10.0.0.0/8');
-	eq(403, $w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', 'boot', 'bootpass')['status']);
+	eq(403, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', 'boot', 'bootpass')['status']);
 };
 
 $tests['server: auto-adopt unknown phones when enabled'] = function () {
@@ -480,9 +480,9 @@ $tests['server: vpn tar only for the device, with remotes'] = function () {
 	$w->settings->set('vpn_external_remote', 'vpn.example.com');
 	$cfg = kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
 	eq('1', $cfg['static.network.vpn_enable']);
-	ok(str_contains($cfg['openvpn.url'], '/c4fc221dd637-vpn.tar'));
-	eq(401, $w->server->handle('/c4fc221dd637-vpn.tar', UA, '192.0.2.50', null, null)['status']);
-	$r = $w->server->handle('/c4fc221dd637-vpn.tar', UA, '192.0.2.50', MAC, $pass);
+	ok(str_contains($cfg['openvpn.url'], '/c4fc22a1b2c3-vpn.tar'));
+	eq(401, $w->server->handle('/c4fc22a1b2c3-vpn.tar', UA, '192.0.2.50', null, null)['status']);
+	$r = $w->server->handle('/c4fc22a1b2c3-vpn.tar', UA, '192.0.2.50', MAC, $pass);
 	eq(200, $r['status']);
 	ok(str_contains($r['body'], 'remote 192.0.2.1 1194,vpn.example.com 1194'));
 };
@@ -491,7 +491,7 @@ $tests['sync: changes notify once; vpn phones are not sent check-sync'] = functi
 	$w = world();
 	phone($w);
 	$pass = $w->store->deviceByMac(MAC)['prov_pass'];
-	$w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', MAC, $pass);
+	$w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', MAC, $pass);
 	$w->sent->exchangeArray([]);
 	eq([], $w->svc->syncChanged(), 'nothing changed yet');
 	$w->pbx->users['212'] = 'Rob Ellis';
@@ -537,10 +537,10 @@ $tests['assets: wallpaper fitted to the model screen'] = function () {
 $tests['import: devices CSV round trip'] = function () {
 	$w = world();
 	$w->svc->saveTemplate(['name' => 'Base']);
-	$r = $w->svc->importDevicesCsv("mac,model,template,name,extension\nc4:fc:22:1d:d6:37,T87W,Base,Desk,212\nzz,T87W,,Bad,212\n");
-	eq(['c4fc221dd637'], $r['imported']);
+	$r = $w->svc->importDevicesCsv("mac,model,template,name,extension\nc4:fc:22:a1:b2:c3,T87W,Base,Desk,212\nzz,T87W,,Bad,212\n");
+	eq(['c4fc22a1b2c3'], $r['imported']);
 	eq(3, $r['errors'][0]['row']);
-	ok(str_contains($w->svc->exportDevicesCsv(), 'c4fc221dd637,T87W,Base,Desk,212'));
+	ok(str_contains($w->svc->exportDevicesCsv(), 'c4fc22a1b2c3,T87W,Base,Desk,212'));
 };
 
 $tests['phone client: RSA key encoding round-trips through OpenSSL'] = function () {
@@ -564,8 +564,8 @@ $tests['render: template-only view and per-model VPN update method'] = function 
 	$w->settings->set('vpn_update_method', 'auto');
 	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['vpn' => 'auto']]);
 	eq('notify', $w->svc->resync([MAC])[0]['method']);
-	$w->svc->saveDevice(['mac' => '80:5e:c0:d6:7c:5f', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '201']], 'settings' => ['vpn' => '6']]);
-	eq('notify', $w->svc->resync(['805ec0d67c5f'])[0]['method']);
+	$w->svc->saveDevice(['mac' => '80:5e:c0:a1:b2:c4', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '201']], 'settings' => ['vpn' => '6']]);
+	eq('notify', $w->svc->resync(['805ec0a1b2c4'])[0]['method']);
 	eq(true, $w->settings->get('resync_on_apply_config'));
 	throws(fn() => $w->settings->set('vpn_update_method', 'sometimes'), 'vpn_update_method');
 };
@@ -585,7 +585,7 @@ $tests['render: tunnel-bound VPN phones provision through the tunnel'] = functio
 	$cfg = kv($w->builder->render($d, '10.8.0.2')['text']);
 	ok(str_contains($cfg['openvpn.url'], '@10.8.0.1:'), $cfg['openvpn.url']);
 	// Server records the request IP, and sync renders reuse it (same hash as the phone got).
-	$r = $w->server->handle('/c4fc221dd637.cfg', UA, '10.8.0.2', MAC, $pass);
+	$r = $w->server->handle('/c4fc22a1b2c3.cfg', UA, '10.8.0.2', MAC, $pass);
 	eq(200, $r['status']);
 	$d = $w->store->deviceByMac(MAC);
 	eq($d['last_hash'], $w->builder->render($d)['hash'], 'sync render matches what the phone fetched');
@@ -594,8 +594,8 @@ $tests['render: tunnel-bound VPN phones provision through the tunnel'] = functio
 	$cfg = kv($w->builder->render($d)['text']);
 	ok(str_contains($cfg['static.auto_provision.server.url'], 'prov-vpn.example.com'));
 	// A model without the quirk keeps the template's network (internal).
-	$w->svc->saveDevice(['mac' => '80:5e:c0:d6:7c:5f', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '212']], 'settings' => ['vpn' => 'auto']]);
-	$cfg = kv($w->builder->render($w->store->deviceByMac('805ec0d67c5f'), '192.168.1.126')['text']);
+	$w->svc->saveDevice(['mac' => '80:5e:c0:a1:b2:c4', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '212']], 'settings' => ['vpn' => 'auto']]);
+	$cfg = kv($w->builder->render($w->store->deviceByMac('805ec0a1b2c4'), '192.168.1.126')['text']);
 	ok(!str_contains($cfg['static.auto_provision.server.url'], 'prov-vpn'), $cfg['static.auto_provision.server.url']);
 	throws(fn() => $w->settings->set('firewall_zones', 'internal,dmz'), 'dmz');
 	$w->settings->set('firewall_zones', 'Internal, other');
@@ -745,10 +745,10 @@ $tests['service: device.sync reports state and requests since a time'] = functio
 	$d = $w->store->deviceByMac(MAC);
 	eq('never', $w->svc->deviceSync(MAC)['sync']);
 	$t = time();
-	$w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', MAC, $d['prov_pass']);
+	$w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', MAC, $d['prov_pass']);
 	$st = $w->svc->deviceSync(MAC, $t);
 	eq('current', $st['sync']);
-	eq('/c4fc221dd637.cfg', end($st['events'])['path']);
+	eq('/c4fc22a1b2c3.cfg', end($st['events'])['path']);
 	eq([], $w->svc->deviceSync(MAC, $t + 3600)['events'], 'nothing after a later time');
 	$w->pbx->users['212'] = 'Renamed';
 	ok(in_array($w->svc->deviceSync(MAC)['sync'], ['stale', 'pending'], true), 'a change shows as not current');
@@ -772,7 +772,7 @@ $tests['keys: overrides that match the template are dropped, so the phone follow
 
 $tests['features: captions on/off/unmanaged, slots, globals, models'] = function () {
 	$w = world();
-	$w->svc->saveFeature(['id' => 'captions', 'name' => 'Live captions', 'kind' => 'softkey_url', 'button_label' => 'Captions', 'url' => 'http://{pbx}:18990/captions/{ext}', 'states' => ['on_talk']]);
+	$w->svc->saveFeature(['id' => 'captions', 'name' => 'Live captions', 'kind' => 'softkey_url', 'button_label' => 'Captions', 'url' => 'http://{pbx}:8080/captions/{ext}', 'states' => ['on_talk']]);
 	ok(isset($w->catalog->features('yealink')['captions']), 'captions feature defined');
 	phone($w);
 	$cfg = fn() => kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
@@ -782,7 +782,7 @@ $tests['features: captions on/off/unmanaged, slots, globals, models'] = function
 	$c = $cfg();
 	eq('1', $c['features.enhanced_dss_keys.enable']);
 	eq('27', $c['linekey.84.type'], 'hidden key = the T87W\'s last key');
-	eq('http://192.0.2.1:18990/captions/212', $c['linekey.84.value']);
+	eq('http://192.0.2.1:8080/captions/212', $c['linekey.84.value']);
 	eq('Captions', $c['softkey.1.label']);
 	eq('$KLineKey84$', $c['softkey.1.action']);
 	eq('1', $c['softkey.1.use.on_talk']);
@@ -814,7 +814,7 @@ $tests['features: captions on/off/unmanaged, slots, globals, models'] = function
 
 $tests['features: custom softkeys from the GUI keep permanent slots'] = function () {
 	$w = world();
-	$w->svc->saveFeature(['id' => 'captions', 'name' => 'Live captions', 'kind' => 'softkey_url', 'button_label' => 'Captions', 'url' => 'http://{pbx}:18990/captions/{ext}', 'states' => ['on_talk']]);
+	$w->svc->saveFeature(['id' => 'captions', 'name' => 'Live captions', 'kind' => 'softkey_url', 'button_label' => 'Captions', 'url' => 'http://{pbx}:8080/captions/{ext}', 'states' => ['on_talk']]);
 	$cam = $w->svc->saveFeature(['id' => 'door_cam', 'name' => 'Door camera', 'kind' => 'softkey_url', 'button_label' => 'Door', 'url' => 'http://{pbx}:8080/cam/{ext}', 'states' => ['idle', 'on_talk'], 'create' => true]);
 	eq(2, $cam['slot'], 'captions has slot 1');
 	eq(1, $w->catalog->features('yealink')['captions']['slot']);
@@ -877,8 +877,8 @@ $tests['admin password: shared by default, per-device when enabled, overrides wi
 	$a = $pw();
 	ok(preg_match('/^admin:\d{10}$/', $a) && $a !== 'admin:24681357', "per-device: $a");
 	eq($a, $pw(), 'stable');
-	$w->svc->saveDevice(['mac' => '80:5e:c0:d6:7c:5f', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '201']]]);
-	ok($pw('805ec0d67c5f') !== $a, 'different per phone');
+	$w->svc->saveDevice(['mac' => '80:5e:c0:a1:b2:c4', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '201']]]);
+	ok($pw('805ec0a1b2c4') !== $a, 'different per phone');
 	eq(substr($a, 6), $w->svc->getDevice(MAC, true)['admin_password'], 'shown on the phone page (reveal)');
 	eq('********', $w->svc->getDevice(MAC)['admin_password']);
 	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['admin_password' => '13572468']]);
@@ -931,7 +931,7 @@ $tests['extension.update: rename + User Management in one call; phones update'] 
 	$w->pbx->userman['201'] = ['uid' => 2, 'username' => '201', 'fname' => 'Alice', 'lname' => 'Smith', 'displayname' => '', 'email' => ''];
 	phone($w, ['keys' => [['position' => 2, 'type' => 'blf', 'value' => '201']]]);
 	$d = $w->store->deviceByMac(MAC);
-	$w->server->handle('/c4fc221dd637.cfg', UA, '192.0.2.50', MAC, $d['prov_pass']);
+	$w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', MAC, $d['prov_pass']);
 	$w->sent->exchangeArray([]);
 	$r = $w->svc->updateExtension(['extension' => '201', 'name' => 'Alicia Smythe', 'fname' => 'Alicia', 'lname' => 'Smythe', 'email' => 'a@example.com']);
 	eq('Alice Smith', $r['rename']['old']);

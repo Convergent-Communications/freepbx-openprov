@@ -10,11 +10,11 @@ There are three front ends, and all of them call the same actions in
 | GUI | `ajax.php?module=openprov&command=api&action=<action>` with a JSON body (needs a logged-in session) |
 
 `fwconsole openprov actions` lists every action. Values in `key=value` CLI
-arguments can be JSON (`devices='["c4fc221dd637"]'`).
+arguments can be JSON (`devices='["c4fc22a1b2c3"]'`).
 
 ## Identifiers
 
-- **Devices** accept an id or a MAC in any format (`c4:fc:22:1d:d6:37`, `C4FC221DD637`).
+- **Devices** accept an id or a MAC in any format (`c4:fc:22:a1:b2:c3`, `C4FC22A1B2C3`).
 - **Templates** accept an id or a name.
 
 ## Actions
@@ -85,7 +85,7 @@ query {
 mutation {
   openprovAction(input: {
     action: "keys.set",
-    args: "{\"scope\":\"device\",\"ref\":\"c4fc221dd637\",\"replace\":false,\"keys\":[{\"position\":8,\"type\":\"feature\",\"value\":\"*271\"}]}"
+    args: "{\"scope\":\"device\",\"ref\":\"c4fc22a1b2c3\",\"replace\":false,\"keys\":[{\"position\":8,\"type\":\"feature\",\"value\":\"*271\"}]}"
   }) { status message result }
 }
 ```
@@ -95,9 +95,9 @@ mutation {
 ## CLI examples
 
 ```sh
-fwconsole openprov device.save --data '{"mac":"c4:fc:22:1d:d6:37","model":"T87W","template":"Default","lines":[{"account":1,"extension":"212"}]}'
-fwconsole openprov keys.fill scope=device ref=c4fc221dd637 extensions='["200","201","202"]' start=2
-fwconsole openprov render device=c4fc221dd637          # masked config
+fwconsole openprov device.save --data '{"mac":"c4:fc:22:a1:b2:c3","model":"T87W","template":"Default","lines":[{"account":1,"extension":"212"}]}'
+fwconsole openprov keys.fill scope=device ref=c4fc22a1b2c3 extensions='["200","201","202"]' start=2
+fwconsole openprov render device=c4fc22a1b2c3          # masked config
 fwconsole openprov resync extension=213                # every phone that shows 213
 fwconsole openprov asset.add kind=firmware path=/tmp/Yealink-T7X-185.87.0.37.rom model=T87W
 fwconsole openprov import.epm modelMap='{"SIP-T57W":"T87W"}'   # dry run

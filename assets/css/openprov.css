@@ -1,5 +1,9 @@
 .openprov .op-header h1 { font-size: 1.6rem; margin: .5rem 0 1rem; }
-.openprov .op-main { padding: 1rem 0; }
+.openprov .op-main { padding: .5rem 0; }
+/* FreePBX's tab panel: tab-content.display draws the left/right/bottom border under the tabs. */
+.openprov .tab-content.display.op-panel { padding: .75rem 1rem 1rem; margin-bottom: 1rem; }
+.openprov .op-panel .op-panel { margin-bottom: .5rem; }
+.openprov .op-panel > .op-sub:first-child, .openprov .op-panel > .op-tplbox:first-child { padding-top: .25rem; }
 .openprov .op-toolbar { margin: .5rem 0 1rem; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .openprov .op-actions { border-top: 1px solid #ddd; padding-top: 1rem; margin-top: 1.5rem; }
 .openprov .op-table td, .openprov .op-table th { vertical-align: middle; }
@@ -25,8 +29,6 @@
 .openprov .op-shot img { max-width: 100%; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,.15); }
 .openprov .op-keys .op-handle { cursor: grab; white-space: nowrap; user-select: none; }
 .openprov .op-keys tr.op-dragging > td { opacity: .45; }
-.openprov .op-keys tr.op-drop-above > td { box-shadow: inset 0 3px 0 #17a2b8; }
-.openprov .op-keys tr.op-drop-below > td { box-shadow: inset 0 -3px 0 #17a2b8; }
 .openprov .op-sync { margin: .25rem 0 .75rem; min-height: 1.6rem; }
 .openprov .op-sync-badge { font-size: .85rem; font-weight: 500; padding: .35em .6em; margin-right: .4rem; }
 .openprov .op-spin { display: inline-block; width: .8em; height: .8em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: op-spin .8s linear infinite; vertical-align: -.1em; }
@@ -44,15 +46,21 @@
    grey edge and dashed, still-white controls: clearly "from the template" but
    obviously editable. Set here = blue edge + blue tint. Unsaved = amber.
    The tints alternate so rows stay striped like the rest of FreePBX. */
-.openprov .op-keys tbody tr > td:first-child { border-left: 4px solid transparent; }
-.openprov .op-keys tr.op-inherited > td:first-child { border-left-color: #adb5bd; }
+/* The coloured edge is drawn inside the cell (the table keeps its own left border). */
+.openprov .op-keys tbody tr { --op-edge: transparent; }
+.openprov .op-keys tbody tr > td:first-child { box-shadow: inset 4px 0 0 var(--op-edge); padding-left: .6rem; }
+.openprov .op-keys tr.op-inherited { --op-edge: #adb5bd; }
 .openprov .op-keys tr.op-inherited .op-tplcol { color: #495057; }
 .openprov .op-keys tr.op-override > td { background-color: rgba(23, 162, 184, .09); }
 .openprov .op-keys tr.op-override:nth-of-type(odd) > td { background-color: rgba(23, 162, 184, .16); }
-.openprov .op-keys tr.op-override > td:first-child { border-left-color: #17a2b8; }
+.openprov .op-keys tr.op-override { --op-edge: #17a2b8; }
 .openprov .op-keys tr.op-changed > td { background-color: rgba(255, 193, 7, .16); }
 .openprov .op-keys tr.op-changed:nth-of-type(odd) > td { background-color: rgba(255, 193, 7, .26); }
-.openprov .op-keys tr.op-changed > td:first-child { border-left-color: #e0a800; }
+.openprov .op-keys tr.op-changed { --op-edge: #e0a800; }
+.openprov .op-keys tr.op-drop-above > td { box-shadow: inset 0 3px 0 #17a2b8; }
+.openprov .op-keys tr.op-drop-below > td { box-shadow: inset 0 -3px 0 #17a2b8; }
+.openprov .op-keys tr.op-drop-above > td:first-child { box-shadow: inset 0 3px 0 #17a2b8, inset 4px 0 0 var(--op-edge); }
+.openprov .op-keys tr.op-drop-below > td:first-child { box-shadow: inset 0 -3px 0 #17a2b8, inset 4px 0 0 var(--op-edge); }
 .openprov .op-keys tr.op-inherited .form-control,
 .openprov .op-field.op-inh .form-control { background-color: #fff; border: 1px dashed #9aa1a8; color: #495057; }
 .openprov .op-keys tr.op-inherited select[data-k="type"] { font-style: italic; }

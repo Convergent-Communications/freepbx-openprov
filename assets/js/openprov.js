@@ -440,6 +440,24 @@
 		// row that follows the template copies the template's key here with the
 		// new line (a blank row becomes a line key), so it saves instead of
 		// being dropped.
+		// A template row's Line box is blank with the template's line as a hint.
+		// Fill the hint in on focus / click, so the spinner arrows step from
+		// it (1 → 2) instead of from blank (→ 1); put it back if nothing changed.
+		$$('.op-keys [data-k="account"]').forEach((inp) => {
+			const prefill = () => {
+				if (inp.value !== '') return;
+				inp.value = inp.placeholder || '1';
+				inp.dataset.prefilled = '1';
+				inp.select();
+			};
+			inp.addEventListener('pointerdown', prefill);
+			inp.addEventListener('focus', prefill);
+			inp.addEventListener('blur', () => {
+				const typeSel = inp.closest('tr').querySelector('[data-k="type"]');
+				if (inp.dataset.prefilled && typeSel.value === '') inp.value = '';
+				delete inp.dataset.prefilled;
+			});
+		});
 		$$('.op-keys [data-k="account"]').forEach((inp) => (inp.onchange = () => {
 			const tr = inp.closest('tr');
 			const typeSel = tr.querySelector('[data-k="type"]');
@@ -657,6 +675,7 @@
 				<li class="nav-item"><a class="nav-link" href="#" data-sub="raw">Raw keys</a></li>
 				${id ? '<li class="nav-item"><a class="nav-link" href="#" data-sub="config">Config preview</a></li><li class="nav-item"><a class="nav-link" href="#" data-sub="activity">Activity</a></li><li class="nav-item"><a class="nav-link" href="#" data-sub="screen">Screen</a></li>' : ''}
 			</ul>
+			<div class="tab-content display op-panel">
 			<div class="op-sub" data-pane="keys">${keysEditor(model.lineKeys || 0, d.keys, tv.keys, true)}
 				${model.expansion ? `<div class="form-inline mb-2"><label class="mr-2">Expansion modules attached</label><select class="form-control form-control-sm" data-setting="expansion_modules">${[0, 1, 2, 3, 4, 5, 6].slice(0, model.expansion.modules + 1).map((n) => `<option value="${n}" ${String(d.settings.expansion_modules || 0) === String(n) ? 'selected' : ''}>${n}</option>`).join('')}</select></div>` : ''}
 				${model.expansion ? Array.from({ length: model.expansion.modules }, (_, i) => `<details class="mb-2" ${d.keys.some((k) => k.bank === 'exp' + (i + 1)) ? 'open' : ''}><summary>Expansion module ${i + 1} (${model.expansion.keysPerModule} keys)</summary>${bankTable(model.expansion.keysPerModule, d.keys, tv.keys, true, 'exp' + (i + 1))}</details>`).join('') : ''}</div>
@@ -667,6 +686,7 @@
 			<div class="op-sub d-none" data-pane="screen">
 				<div class="op-toolbar"><button class="btn btn-default" id="op-shot">Capture screen</button><span class="small text-muted" id="op-shot-info"></span></div>
 				<div id="op-shot-box" class="op-shot"></div>
+			</div>
 			</div>
 			<div class="op-toolbar op-actions">
 				<button class="btn btn-primary" id="op-save">Save</button>
@@ -787,11 +807,13 @@
 				<li class="nav-item"><a class="nav-link" href="#" data-sub="keys">Keys</a></li>
 				<li class="nav-item"><a class="nav-link" href="#" data-sub="raw">Raw keys</a></li>
 			</ul>
+			<div class="tab-content display op-panel">
 			${pv.name ? `<div class="alert alert-secondary op-tplbox">Inherits from <b>${pv.chain.map((x) => esc(x.name)).join(' → ')}</b> <a href="#" id="op-goto-parent" class="ml-2">Edit parent &rarr;</a>
 				<div class="small mt-1">Set on this template: <b>${t.keys.filter((k) => k.type !== '').length}</b> key(s) · <b>${Object.keys(t.settings || {}).length}</b> setting(s). Everything else comes from the parent.</div></div>` : ''}
 			<div class="op-sub" data-pane="settings">${settingsForm(t.settings, pv.settings, 'template', pv.name ? 'parent ' + pv.name : 'defaults', pv.sources)}</div>
 			<div class="op-sub d-none" data-pane="keys"><p class="small text-muted">Keys beyond a model's key count are ignored for that model (T87W: 84).</p>${keysEditor(maxKeys, t.keys, pv.name ? pv.keys : null, false)}</div>
 			<div class="op-sub d-none" data-pane="raw"><textarea class="form-control op-mono" rows="14" id="op-raw">${esc(rawText(t.raw))}</textarea></div>
+			</div>
 			<div class="op-toolbar op-actions">
 				<button class="btn btn-primary" id="op-save">Save</button>
 				${id ? '<button class="btn btn-default" id="op-copy">Copy…</button><button class="btn btn-danger float-right" id="op-delete">Delete</button>' : ''}

@@ -12,6 +12,7 @@ $web = $info['web'];
 			</div>
 		<?php endif; ?>
 	</div>
+	<div class="fpbx-container">
 	<ul class="nav nav-tabs" role="tablist">
 		<li class="nav-item"><a class="nav-link active" href="#" data-tab="templates">Templates</a></li>
 		<li class="nav-item"><a class="nav-link" href="#" data-tab="devices">Phones</a></li>
@@ -22,6 +23,9 @@ $web = $info['web'];
 		<li class="nav-item"><a class="nav-link" href="#" data-tab="dashboard">Dashboard</a></li>
 		<li class="nav-item"><a class="nav-link" href="#" data-tab="settings">Settings</a></li>
 	</ul>
-	<div id="op-flash"></div>
-	<div id="op-main" class="op-main">Loading…</div>
+	<div class="tab-content display op-panel">
+		<div id="op-flash"></div>
+		<div id="op-main" class="op-main">Loading…</div>
+	</div>
+	</div>
 </div>

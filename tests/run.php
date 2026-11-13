@@ -973,6 +973,23 @@ $tests['render: unreadable stored settings refuse to render instead of sending d
 	throws(fn() => $w->svc->getTemplate($t['id']), 'unreadable');
 };
 
+$tests['dashboard: only simple settings can be allowed; remote reads never show stored passwords'] = function () {
+	$w = world();
+	$t = $w->svc->saveTemplate(['name' => 'Secrets', 'settings' => ['admin_password' => '13572468', 'backlight_time' => '30'], 'raw' => "static.security.user_password = admin:4321"]);
+	phone($w, ['template' => $t['id'], 'settings' => ['admin_password' => '99887766']]);
+	$w->settings->set('dashboard_settings', 'backlight_time,wallpaper,ringtone,admin_password,prov_network,handset_send');
+	$r = new \FreePBX\modules\Openprov\Api($w->svc, 'remote');
+	eq(['backlight_time', 'handset_send'], array_column($r->call('dashboard.policy', [])['settings'], 'id'), 'asset, ringtone, password and computed settings are never offered');
+	throws(fn() => $r->call('device.save', ['mac' => MAC, 'settings' => ['wallpaper' => '1']]), "setting 'wallpaper'");
+	foreach ([$r->call('device.get', ['device' => MAC]), $r->call('template.get', ['template' => $t['id']]), $r->call('templates.list', [])] as $out) {
+		$json = json_encode($out);
+		ok(!str_contains($json, '13572468') && !str_contains($json, '99887766') && !str_contains($json, '4321'), 'a password leaked: ' . substr($json, 0, 200));
+	}
+	ok(str_contains(json_encode($r->call('device.get', ['device' => MAC])), '"backlight_time":"30"'), 'other settings still readable');
+	// the FreePBX GUI (admin) still sees the stored values it edits
+	eq('99887766', (new \FreePBX\modules\Openprov\Api($w->svc, 'admin'))->call('device.get', ['device' => MAC])['settings']['admin_password']);
+};
+
 // ---- runner --------------------------------------------------------------------
 
 $filter = $argv[1] ?? '';

@@ -82,6 +82,31 @@ class Api
 
 	public function call(string $action, array $a, array $files = [])
 	{
+		$out = $this->dispatch($action, $a, $files);
+		return $this->origin === 'remote' ? self::scrub($out) : $out;
+	}
+
+	/**
+	 * Remote callers never see stored passwords: settings and raw keys named
+	 * like a password (a template's admin_password, a raw
+	 * static.security.user_password, ...) are masked wherever they appear.
+	 */
+	public static function scrub($v, string $key = '')
+	{
+		if (is_array($v)) {
+			foreach ($v as $k => $x) {
+				$v[$k] = self::scrub($x, (string) $k);
+			}
+			return $v;
+		}
+		if (is_string($v) && $v !== '' && preg_match('/pass(word|wd)?$|secret/i', $key)) {
+			return '********';
+		}
+		return $v;
+	}
+
+	private function dispatch(string $action, array $a, array $files)
+	{
 		if ($this->origin !== 'cli') {
 			unset($a['path']);
 		}

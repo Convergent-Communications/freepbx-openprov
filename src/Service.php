@@ -321,6 +321,18 @@ class Service
 	 * What the dashboard may change on this PBX, with enough detail to build
 	 * its forms (labels, options).
 	 */
+	/**
+	 * Settings the dashboard can be allowed to change: simple types it can
+	 * show (on/off, number, choice, text), never the security/provisioning
+	 * ones, add-on feature parameters or computed values.
+	 */
+	public static function dashboardSettable(array $s): bool
+	{
+		return in_array($s['type'] ?? '', ['bool', 'number', 'select', 'text'], true)
+			&& empty($s['feature']) && empty($s['computed'])
+			&& !in_array($s['id'], self::NEVER_FROM_DASHBOARD, true);
+	}
+
 	public function dashboardPolicy(string $brand = 'yealink'): array
 	{
 		$on = (bool) $this->settings->get('dashboard_access');
@@ -331,7 +343,7 @@ class Service
 		}
 		$settings = [];
 		foreach ($this->csv('dashboard_settings') as $id) {
-			if (isset($schema[$id]) && empty($schema[$id]['feature']) && !in_array($id, self::NEVER_FROM_DASHBOARD, true)) {
+			if (isset($schema[$id]) && self::dashboardSettable($schema[$id])) {
 				$settings[] = array_intersect_key($schema[$id], array_flip(['id', 'label', 'group', 'type', 'options', 'default', 'help', 'min', 'max']));
 			}
 		}
@@ -360,7 +372,7 @@ class Service
 	public function checkRemoteChange(string $action, array $a): array
 	{
 		$p = $this->dashboardPolicy();
-		$deny = fn(string $why) => throw new \InvalidArgumentException("Not allowed from the dashboard: $why (OpenProv → Settings → Dashboard access)");
+		$deny = fn(string $why) => throw new \InvalidArgumentException("Not allowed from the dashboard: $why (OpenProv → Dashboard tab)");
 		if (!$p['changes_allowed']) {
 			$deny('changes are turned off');
 		}

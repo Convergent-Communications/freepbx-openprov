@@ -105,7 +105,7 @@ fwconsole openprov import.epm modelMap='{"SIP-T57W":"T87W"}'   # dry run
 
 ## Remote (GraphQL) callers and the dashboard policy
 
-Every change made through GraphQL is checked against Settings → **Dashboard access** (`Service::checkRemoteChange`):
+Every change made through GraphQL is checked against the **Dashboard** tab (the `dashboard_*` module settings; `Service::checkRemoteChange`):
 
 - **Allowed:**
   - `keys.set` on a phone, with the allowed key types only. Keys of other types stay as set on the PBX.
@@ -113,6 +113,6 @@ Every change made through GraphQL is checked against Settings → **Dashboard ac
   - `extension.update`
   - `resync` and `sync.changed`
 - **Refused:** everything else (templates, raw keys, VPN, passwords, firmware, settings), with a message naming the setting to change.
-- **Never delegated:** `Service::NEVER_FROM_DASHBOARD`, whatever is ticked.
+- **Never delegated:** `Service::NEVER_FROM_DASHBOARD`, and any setting that isn't on/off, a number, a choice or text (wallpapers, ringtones, distinctive rules, passwords, computed settings): `Service::dashboardSettable()`.
 
-GraphQL callers never get secrets (`reveal` is ignored) and can't name server files.
+GraphQL callers never get secrets: `reveal` is ignored, every value whose key looks like a password or secret is masked in replies (`Api::scrub`, e.g. a template's `admin_password` or a raw `static.security.user_password`), and they can't name server files.

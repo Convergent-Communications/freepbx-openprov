@@ -19,6 +19,7 @@ $web = $info['web'];
 		<li class="nav-item"><a class="nav-link" href="#" data-tab="assets">Files</a></li>
 		<li class="nav-item"><a class="nav-link" href="#" data-tab="discover">Discover</a></li>
 		<li class="nav-item"><a class="nav-link" href="#" data-tab="events">Activity</a></li>
+		<li class="nav-item"><a class="nav-link" href="#" data-tab="dashboard">Dashboard</a></li>
 		<li class="nav-item"><a class="nav-link" href="#" data-tab="settings">Settings</a></li>
 	</ul>
 	<div id="op-flash"></div>

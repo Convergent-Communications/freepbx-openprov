@@ -71,7 +71,7 @@
 	const refreshLookups = () => { delete cache.models; return lookups(); };
 
 	// ---- tabs ----------------------------------------------------------------
-	const tabs = { devices, templates, features, assets, discover, events, settings };
+	const tabs = { devices, templates, features, assets, discover, events, dashboard, settings };
 	function selectTab(name) {
 		$$('[data-tab]', app).forEach((n) => n.classList.toggle('active', n.dataset.tab === name));
 	}
@@ -1031,9 +1031,7 @@
 			<p class="small">Web server: ${w.installed ? (w.current ? '<span class="text-success">installed and current</span>' : '<span class="text-warning">out of date</span>') : '<span class="text-danger">not installed</span>'} (HTTPS ${w.https_port}${w.http_port ? ', HTTP ' + w.http_port : ''}).
 			${w.current ? '' : `Run <code>${esc(w.command)}</code> as root.`} System Admin VPN server: ${info.vpn_server ? 'enabled' : 'off'}.</p>
 			<div class="form-row">${rows}</div>
-			<h4 class="mt-3">Dashboard access</h4>
-			<p class="small text-muted">What the Convergent dashboard (and any other GraphQL API caller) may change on this PBX. Enforced here, in OpenProv; the dashboard's own role permissions apply on top. Templates, raw keys, VPN, passwords and firmware can never be changed from the dashboard.</p>
-			${dashboardAccess(s, await lookups(), await api('features.list'))}
+			<p class="small text-muted">What the Convergent dashboard may change is on the <a href="#" data-tab="dashboard">Dashboard</a> tab.</p>
 			<button class="btn btn-primary" id="op-gs-save">Save settings</button>
 			<hr><h4>Phone models</h4>
 			<p class="small text-muted">Brands: Yealink. Each model is a JSON file in <code>models/yealink/</code> (see docs/ADDING-MODELS.md); other brands need a brand driver (<code>src/Brand</code>). Unverified models use vendor data and haven't been checked on hardware.</p>
@@ -1044,8 +1042,6 @@
 			<div class="form-row"><div class="col-md-4"><input class="form-control" id="op-epm-map" placeholder='{"SIP-T57W":"T87W"}'></div><div class="col-md-3"><select class="form-control" id="op-epm-tpl">${(await lookups()).templates.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></div>
 			<div class="col-md-5"><button class="btn btn-default" id="op-epm-dry">Preview</button> <button class="btn btn-default" id="op-epm-run">Import</button></div></div>
 			<pre class="op-pre mt-2" id="op-epm-out"></pre>`;
-		const syncCsv = (name) => { const h = $(`[data-gs="${name}"]`); h.value = $$(`[data-csv="${name}"]`).filter((c) => c.checked).map((c) => c.value).join(','); };
-		$$('[data-csv]').forEach((c) => (c.onchange = () => syncCsv(c.dataset.csv)));
 		$('#op-gs-save').onclick = (e) => guard(e.target, async () => {
 			const vals = {};
 			$$('[data-gs]').forEach((el) => (vals[el.dataset.gs] = el.value));
@@ -1063,20 +1059,182 @@
 		$('#op-epm-run').onclick = () => confirm('Import these phones into OpenProv?') && epm(false);
 	}
 
+	// ---- Dashboard ------------------------------------------------------------
+	// What the Convergent dashboard (any GraphQL API caller) may change. Stored
+	// as the dashboard_* module settings; enforced by Service::checkRemoteChange.
+
+	/** Mirrors Service::NEVER_FROM_DASHBOARD / dashboardSettable(). */
 	const NEVER_FROM_DASHBOARD = ['admin_password', 'user_password', 'vpn', 'prov_network', 'firmware', 'keep_local_changes', 'manage_keys', 'resync_minutes', 'sip_server', 'sip_port', 'sip_transport', 'web_https_only'];
-	/** The Dashboard access block: on/off switches plus checkbox lists stored as comma lists. */
-	function dashboardAccess(s, c, feats) {
-		const yn = (k, label) => `<div class="form-group col-md-4"><label class="small mb-0">${label}</label><select class="form-control form-control-sm" data-gs="${k}"><option value="1" ${s[k] ? 'selected' : ''}>Yes</option><option value="0" ${s[k] ? '' : 'selected'}>No</option></select></div>`;
-		const list = (k, items) => {
-			const on = String(s[k] || '').split(',').map((x) => x.trim());
-			return `<input type="hidden" data-gs="${k}" value="${esc(s[k] || '')}"><div class="op-checks">${items.map(([v, l]) => `<label class="mr-3 small"><input type="checkbox" data-csv="${k}" value="${esc(v)}" ${on.includes(v) ? 'checked' : ''}> ${esc(l)}</label>`).join('')}</div>`;
+	const dashboardSettable = (x) => ['bool', 'number', 'select', 'text'].includes(x.type) && !x.feature && !x.computed && !NEVER_FROM_DASHBOARD.includes(x.id);
+	/** Settings where a wrong value can take a phone offline. */
+	const isTechnical = (x) => ['SIP', 'Network'].includes(x.group) || ['ntp1', 'ntp2'].includes(x.id);
+	/** The recommended button set (also the module's default). */
+	const COMMON_KEYS = ['none', 'line', 'blf', 'speeddial', 'feature', 'feature_dial', 'park', 'park_slot', 'retrieve_park', 'voicemail', 'dnd', 'forward', 'transfer', 'hold', 'conference', 'intercom', 'pickup', 'group_pickup', 'directory', 'call_return', 'keypad_lock'];
+	const KEY_GROUPS = [
+		['Calls and people', ['none', 'line', 'blf', 'speeddial', 'intercom', 'pickup', 'group_pickup', 'transfer', 'hold', 'conference', 'dtmf', 'prefix']],
+		['Features', ['feature', 'feature_dial', 'dnd', 'forward', 'voicemail', 'call_return', 'record', 'keypad_lock', 'directory', 'hotdesk', 'sms']],
+		['Parking', ['park', 'park_slot', 'retrieve_park']],
+		['Advanced: point a phone at a web or network address', ['url', 'xml', 'xml_group', 'ldap', 'paging_list', 'multicast_paging']],
+	];
+
+	async function dashboard() {
+		const [s, c, feats] = await Promise.all([api('settings.get'), lookups(), api('features.list')]);
+		const csv = (k) => String(s[k] || '').split(',').map((x) => x.trim()).filter(Boolean);
+		const allKeys = Object.keys(c.keytypes);
+		const keyLabel = (t) => (t === 'none' ? 'Blank button' : c.keytypes[t]?.label || t);
+		const settable = c.schema.filter(dashboardSettable);
+		const state = {
+			on: !!s.dashboard_access,
+			rename: !!s.dashboard_rename,
+			user: !!s.dashboard_user_details,
+			keys: new Set(csv('dashboard_key_types').filter((t) => allKeys.includes(t))),
+			settings: new Set(csv('dashboard_settings').filter((id) => settable.some((x) => x.id === id))),
+			features: new Set(csv('dashboard_features').filter((id) => feats.some((f) => f.id === id))),
 		};
-		const keyTypes = [['none', 'Blank'], ...Object.entries(c.keytypes).filter(([t]) => t !== 'none').map(([t, d]) => [t, d.label])];
-		const settings = c.schema.filter((x) => !x.feature && !NEVER_FROM_DASHBOARD.includes(x.id)).map((x) => [x.id, `${x.group}: ${x.label}`]);
-		return `<div class="form-row">${yn('dashboard_access', 'Allow changes from the dashboard')}${yn('dashboard_rename', 'Rename extensions')}${yn('dashboard_user_details', 'Edit User Management name / email')}</div>
-			<div class="form-group"><label class="small mb-0">Key types the dashboard may put on a phone (a phone's own keys only; keys of other types stay as set here)</label>${list('dashboard_key_types', keyTypes)}</div>
-			<div class="form-group"><label class="small mb-0">Phone settings the dashboard may change per phone (none by default)</label>${list('dashboard_settings', settings)}</div>
-			<div class="form-group"><label class="small mb-0">Add-on features the dashboard may switch on/off per phone</label>${feats.length ? list('dashboard_features', feats.map((f) => [f.id, f.name])) : '<div class="small text-muted">No add-on features defined.</div>'}</div>`;
+		const sameSet = (a, b) => a.size === b.length && b.every((x) => a.has(x));
+		const preset = () => (state.keys.size === 0 ? 'locked' : sameSet(state.keys, COMMON_KEYS.filter((t) => allKeys.includes(t))) ? 'common' : sameSet(state.keys, allKeys) ? 'all' : 'custom');
+		let keyMode = preset();
+
+		const check = (name, value, checked, label, help = '') => `<div class="custom-control custom-checkbox mb-2">
+				<input type="checkbox" class="custom-control-input" id="opd-${name}-${esc(value)}" data-opd="${name}" value="${esc(value)}" ${checked ? 'checked' : ''}>
+				<label class="custom-control-label" for="opd-${name}-${esc(value)}">${label}${help ? `<div class="small text-muted">${help}</div>` : ''}</label></div>`;
+		const radio = (name, value, checked, label, help = '') => `<div class="custom-control custom-radio mb-2">
+				<input type="radio" class="custom-control-input" name="opd-${name}" id="opd-${name}-${value}" value="${value}" ${checked ? 'checked' : ''}>
+				<label class="custom-control-label" for="opd-${name}-${value}"><strong>${label}</strong>${help ? `<div class="small text-muted">${help}</div>` : ''}</label></div>`;
+		const short = (h) => esc(String(h || '').split(/(?<=\.)\s/)[0]);
+
+		const settingGroups = (technical) => {
+			const groups = {};
+			settable.filter((x) => isTechnical(x) === technical).forEach((x) => (groups[x.group] = groups[x.group] || []).push(x));
+			return Object.entries(groups).map(([g, list]) => `<div class="col-md-6 col-xl-4 mb-3"><div class="d-flex align-items-baseline mb-1"><strong>${esc(g)}</strong>
+				<a href="#" class="small ml-2" data-opd-all="${esc(g)}">all</a><span class="small text-muted mx-1">·</span><a href="#" class="small" data-opd-none="${esc(g)}">none</a></div>
+				${list.map((x) => check('settings', x.id, state.settings.has(x.id), esc(x.label), short(x.help))).join('')}</div>`).join('');
+		};
+
+		main.innerHTML = `
+			<div class="op-dash">
+			<p class="mb-3">Choose what people can change from the <strong>Convergent dashboard</strong> on this phone system. Their role in the dashboard still decides <em>who</em> can use each one; this page sets the limit for everyone.</p>
+			<div class="alert op-dash-summary" id="opd-summary"></div>
+
+			<div class="card mb-3"><div class="card-body">
+				<h5 class="card-title">1. Allow changes from the dashboard?</h5>
+				${radio('on', '1', state.on, 'Yes, allow the changes chosen below')}
+				${radio('on', '0', !state.on, 'No, the dashboard can only look', 'Nothing below applies while this is off.')}
+			</div></div>
+
+			<div id="opd-body">
+			<div class="card mb-3"><div class="card-body">
+				<h5 class="card-title">2. Names</h5>
+				${check('rename', '1', state.rename, '<strong>Rename extensions</strong>', 'The name shown on phones, in caller ID and on voicemail.')}
+				${check('user', '1', state.user, '<strong>Edit people\'s details</strong>', 'First name, last name, display name and email in User Management.')}
+			</div></div>
+
+			<div class="card mb-3"><div class="card-body">
+				<h5 class="card-title">3. Phone buttons</h5>
+				<p class="small text-muted">People change the buttons on a phone from that phone's extension page. Templates can't be changed from the dashboard.</p>
+				${radio('keys', 'locked', keyMode === 'locked', 'Locked', 'Buttons can only be changed here, in OpenProv.')}
+				${radio('keys', 'common', keyMode === 'common', 'Common buttons (recommended)', 'People (busy lights), speed dials, parking, voicemail, do not disturb, forward, transfer, intercom, pickup and similar.')}
+				${radio('keys', 'all', keyMode === 'all', 'Every button type', 'Includes buttons that open web pages or page a multicast address.')}
+				${radio('keys', 'custom', keyMode === 'custom', 'Let me choose')}
+				<div id="opd-keys-panel" class="row mt-2 ml-3" ${keyMode === 'custom' ? '' : 'hidden'}>
+					${KEY_GROUPS.map(([g, types]) => {
+						const list = types.filter((t) => allKeys.includes(t));
+						return list.length ? `<div class="col-md-6 col-xl-3 mb-2"><strong class="d-block mb-1">${esc(g)}</strong>${list.map((t) => check('keys', t, state.keys.has(t), esc(keyLabel(t)))).join('')}</div>` : '';
+					}).join('')}
+					${(() => { const rest = allKeys.filter((t) => !KEY_GROUPS.some(([, l]) => l.includes(t))); return rest.length ? `<div class="col-md-6 col-xl-3 mb-2"><strong class="d-block mb-1">Other</strong>${rest.map((t) => check('keys', t, state.keys.has(t), esc(keyLabel(t)))).join('')}</div>` : ''; })()}
+				</div>
+				<p class="small text-muted mb-0 mt-2">A button of a type not allowed here shows as locked in the dashboard and stays as you set it.</p>
+			</div></div>
+
+			<div class="card mb-3"><div class="card-body">
+				<h5 class="card-title">4. Add-on features</h5>
+				<p class="small text-muted">People can turn these on or off for a phone. What each one does is set on the <a href="#" data-tab="features">Features</a> tab.</p>
+				${feats.length ? feats.map((f) => check('features', f.id, state.features.has(f.id), `<strong>${esc(f.name)}</strong>`, esc(f.description))).join('') : '<p class="text-muted mb-0">No add-on features yet.</p>'}
+			</div></div>
+
+			<div class="card mb-3"><div class="card-body">
+				<h5 class="card-title">5. Phone settings</h5>
+				<p class="small text-muted">People can change these for a phone; a phone left alone follows its template. Not ticked = only changeable here.</p>
+				<div class="row">${settingGroups(false)}</div>
+				<details class="mt-1"><summary><strong>Technical settings</strong> <span class="small text-muted">SIP, network and time servers</span></summary>
+					<div class="alert alert-warning small mt-2">A wrong value here can stop a phone registering or reaching the network. Only allow these if the people changing them know what they do.</div>
+					<div class="row">${settingGroups(true)}</div>
+				</details>
+			</div></div>
+			</div>
+
+			<div class="card mb-3 bg-light"><div class="card-body small">
+				<strong>Never from the dashboard:</strong> templates, assigning phones, provisioning and VPN settings, admin and user passwords, firmware, wallpapers and ringtone files, raw config keys.
+			</div></div>
+
+			<button class="btn btn-primary" id="opd-save">Save</button>
+			<button class="btn btn-default" id="opd-undo">Undo changes</button>
+			</div>`;
+
+		const summary = () => {
+			const box = $('#opd-summary');
+			$('#opd-body').classList.toggle('op-dim', !state.on);
+			if (!state.on) {
+				box.className = 'alert alert-secondary op-dash-summary';
+				box.innerHTML = '<strong>The dashboard can\'t change anything on this phone system.</strong>';
+				return;
+			}
+			const can = [];
+			if (state.rename) can.push('rename extensions');
+			if (state.user) can.push('edit people\'s names and email');
+			const k = preset();
+			if (k === 'common') can.push('change phone buttons (common types)');
+			else if (k === 'all') can.push('change phone buttons (every type)');
+			else if (k === 'custom') can.push(`change phone buttons (${state.keys.size} type${state.keys.size === 1 ? '' : 's'})`);
+			const f = feats.filter((x) => state.features.has(x.id)).map((x) => x.name);
+			if (f.length) can.push(`turn ${f.join(', ')} on or off`);
+			const st = settable.filter((x) => state.settings.has(x.id));
+			if (st.length) can.push(`change ${st.length <= 3 ? st.map((x) => x.label.replace(/\s*\(.*\)$/, '').toLowerCase()).join(', ') : st.length + ' phone settings'}`);
+			const tech = st.filter(isTechnical).length;
+			box.className = 'alert alert-info op-dash-summary';
+			box.innerHTML = can.length
+				? `<strong>People with permission in the dashboard can:</strong> ${esc(can.join('; '))}.${tech ? ` <span class="badge badge-warning">${tech} technical setting${tech === 1 ? '' : 's'}</span>` : ''}`
+				: '<strong>Changes are on, but nothing is chosen below</strong>, so the dashboard can\'t change anything yet.';
+		};
+
+		$$('input[name="opd-on"]').forEach((r) => (r.onchange = () => { state.on = r.value === '1'; summary(); }));
+		$$('input[name="opd-keys"]').forEach((r) => (r.onchange = () => {
+			keyMode = r.value;
+			if (keyMode === 'locked') state.keys = new Set();
+			if (keyMode === 'common') state.keys = new Set(COMMON_KEYS.filter((t) => allKeys.includes(t)));
+			if (keyMode === 'all') state.keys = new Set(allKeys);
+			$("#opd-keys-panel").hidden = keyMode !== 'custom';
+			$$('[data-opd="keys"]').forEach((c) => (c.checked = state.keys.has(c.value)));
+			summary();
+		}));
+		$$('[data-opd]').forEach((c) => (c.onchange = () => {
+			const k = c.dataset.opd;
+			if (k === 'rename') state.rename = c.checked;
+			else if (k === 'user') state.user = c.checked;
+			else state[k][c.checked ? 'add' : 'delete'](c.value);
+			summary();
+		}));
+		const setGroup = (g, on) => settable.filter((x) => x.group === g).forEach((x) => {
+			state.settings[on ? 'add' : 'delete'](x.id);
+			const el = $(`[data-opd="settings"][value="${x.id}"]`);
+			if (el) el.checked = on;
+		});
+		$$('[data-opd-all]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); setGroup(a.dataset.opdAll, true); summary(); }));
+		$$('[data-opd-none]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); setGroup(a.dataset.opdNone, false); summary(); }));
+		$('#opd-undo').onclick = () => dashboard().catch(fail);
+		$('#opd-save').onclick = (e) => guard(e.target, async () => {
+			await api('settings.set', {
+				dashboard_access: state.on ? '1' : '0',
+				dashboard_rename: state.rename ? '1' : '0',
+				dashboard_user_details: state.user ? '1' : '0',
+				dashboard_key_types: allKeys.filter((t) => state.keys.has(t)).join(','),
+				dashboard_settings: settable.filter((x) => state.settings.has(x.id)).map((x) => x.id).join(','),
+				dashboard_features: feats.filter((f) => state.features.has(f.id)).map((f) => f.id).join(','),
+			});
+			say('Saved. The dashboard picks this up within 10 minutes; its extension pages ask the phone system each time they load.');
+			dashboard();
+		});
+		summary();
 	}
 
 	// ---- boot ----------------------------------------------------------------

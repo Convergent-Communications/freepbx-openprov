@@ -43,3 +43,10 @@
 .openprov .op-sync-badge { font-size: .85rem; font-weight: 500; padding: .35em .6em; margin-right: .4rem; }
 .openprov .op-spin { display: inline-block; width: .8em; height: .8em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: op-spin .8s linear infinite; vertical-align: -.1em; }
 @keyframes op-spin { to { transform: rotate(360deg); } }
+
+/* Dashboard tab */
+.openprov .op-dash { max-width: 1100px; }
+.openprov .op-dash .card-title { font-size: 1.05rem; }
+.openprov .op-dash .op-dim { opacity: .45; }
+.openprov .op-dash details > summary { cursor: pointer; }
+.openprov .op-dash .custom-control-label { font-weight: normal; }

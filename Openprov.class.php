@@ -12,7 +12,7 @@ use FreePBX\modules\Openprov\Service;
 use FreePBX\modules\Openprov\Settings;
 use FreePBX\modules\Openprov\Store;
 use FreePBX\modules\Openprov\Vpn;
-use FreePBX\modules\Openprov\WebServer;
+use FreePBX\modules\Openprov\Web;
 
 spl_autoload_register(function ($class) {
 	$prefix = 'FreePBX\\modules\\Openprov\\';
@@ -58,8 +58,18 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 		$vpn = new Vpn($this->db);
 		$assets = new Assets($store, $this->assetDir());
 		$builder = new ConfigBuilder($store, $catalog, $pbx, $vpn, $assets, $settings, ['yealink' => new Yealink()]);
-		$web = new WebServer($settings, __DIR__ . '/web');
+		$web = new Web($settings, $this->webRoot(), __DIR__ . '/htdocs');
 		return $this->parts = compact('settings', 'store', 'catalog', 'pbx', 'vpn', 'assets', 'builder', 'web');
+	}
+
+	public function webRoot(): string
+	{
+		$root = '/var/www/html';
+		try {
+			$root = $this->FreePBX->Config->get('AMPWEBROOT') ?: $root;
+		} catch (\Throwable $e) {
+		}
+		return rtrim($root, '/');
 	}
 
 	public function assetDir(): string
@@ -121,11 +131,66 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 		} catch (\Throwable $e) {
 			out('OpenProv: could not register the sync job: ' . $e->getMessage());
 		}
-		if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
-			[$ok, $msg] = $p['web']->install();
-			out('OpenProv web server: ' . $msg);
-		} else {
-			out('OpenProv: run "fwconsole openprov web --install" as root to enable the provisioning web server.');
+		$this->migrateSettings();
+		// Phones are served at /openprov/ on FreePBX's own web server. Nothing
+		// here writes Apache configuration (DESIGN.md D3).
+		[, $msg] = $this->webInstall();
+		out('OpenProv: ' . str_replace("\n", "\nOpenProv: ", $msg));
+	}
+
+	/**
+	 * 0.1.x stored https_port/http_port (and TLS files, firewall zones) for
+	 * its own vhost. The ports now name FreePBX's web ports, so the old
+	 * values (8443, 8088) must not carry over into phone URLs. Runs once
+	 * (again after restoring a 0.1 backup: Restore.php).
+	 */
+	public function migrateSettings(): void
+	{
+		if ($this->getConfig('web_layout') === 'path') {
+			return;
+		}
+		$old = [];
+		foreach (['https_port', 'http_port', 'tls_cert', 'tls_key', 'tls_chain', 'firewall_zones'] as $k) {
+			$v = $this->getConfig($k);
+			if ($v !== null && $v !== false && $v !== '') {
+				$old[] = "$k=$v";
+				$this->setConfig($k, false); // deletes the key
+			}
+		}
+		if ($old) {
+			out('OpenProv: phones now use /openprov/ on FreePBX\'s web ports (HTTPS 443). Cleared the 0.1 vhost settings: ' . implode(', ', $old)
+				. '. If FreePBX\'s HTTPS is on another port (System Admin Port Management), set it: fwconsole openprov settings.set https_port=N');
+		}
+		$this->setConfig('web_layout', 'path');
+	}
+
+	/**
+	 * Publish /openprov and, as root, remove the 0.1.x vhost. Used by
+	 * install/upgrade, fwconsole reload (root) and fwconsole openprov web
+	 * --install. Keeps a FreePBX notification up while the vhost is still
+	 * there. As asterisk (GUI) it never touches Apache. Returns [ok, message].
+	 */
+	public function webInstall(): array
+	{
+		$web = $this->parts()['web'];
+		[$ok, $msg] = $web->publish();
+		[$ok2, $msg2] = $web->removeLegacy(); // also drops the 0.1 firewall service
+		$this->legacyNotice($web->legacy()['present']);
+		return [$ok && $ok2, trim($msg . "\n" . $msg2)];
+	}
+
+	private function legacyNotice(bool $show): void
+	{
+		try {
+			$n = $this->FreePBX->Notifications;
+			if ($show) {
+				$n->add_critical('openprov', 'legacy_vhost', _('OpenProv: remove the old provisioning vhost'),
+					sprintf(_('OpenProv 0.1 installed an Apache vhost (/etc/apache2/sites-enabled/openprov.conf) with its own Listen port. If another service takes that port, Apache fails to start and the FreePBX GUI goes down. OpenProv no longer uses it. Remove it as root: %s (or run fwconsole reload as root).'), Web::COMMAND),
+					'', true, false);
+			} else {
+				$n->delete('openprov', 'legacy_vhost');
+			}
+		} catch (\Throwable $e) {
 		}
 	}
 
@@ -135,9 +200,13 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 			\FreePBX::Job()->removeAll('openprov');
 		} catch (\Throwable $e) {
 		}
-		if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
-			$this->parts()['web']->uninstall();
+		$web = $this->parts()['web'];
+		$web->unpublish();
+		if ($web->legacy()['present']) {
+			[, $msg] = $web->removeLegacy();
+			out('OpenProv: ' . $msg);
 		}
+		$this->legacyNotice(false);
 	}
 
 	/**
@@ -147,6 +216,14 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 	 */
 	public function genConfig()
 	{
+		// fwconsole reload as root: finish an upgrade done from the GUI by
+		// removing the 0.1.x vhost. Never as asterisk (GUI Apply Config).
+		try {
+			if (function_exists('posix_geteuid') && posix_geteuid() === 0 && $this->parts()['web']->legacy()['present']) {
+				$this->webInstall();
+			}
+		} catch (\Throwable $e) {
+		}
 		try {
 			$p = $this->parts();
 			if ($p['settings']->get('resync_on_apply_config')) {

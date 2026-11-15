@@ -1,0 +1,83 @@
+<?php
+/**
+ * OpenProv provisioning front controller, for phones (DESIGN.md D3).
+ *
+ * Published as /openprov/ on FreePBX's own web server: <webroot>/openprov is
+ * a symlink to this directory and .htaccess sends every path here, so
+ * https://pbx/openprov/<mac>.cfg reaches ProvisionServer as /<mac>.cfg.
+ *
+ * The file is also reachable inside the module directory under /admin; answer
+ * only when it was requested through the published path.
+ */
+const OPENPROV_PATH = '/openprov';
+
+if (($_SERVER['SCRIPT_NAME'] ?? '') !== OPENPROV_PATH . '/index.php') {
+	http_response_code(404);
+	exit;
+}
+$uriPath = (string) (parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?? '/');
+if ($uriPath !== OPENPROV_PATH && !str_starts_with($uriPath, OPENPROV_PATH . '/')) {
+	http_response_code(404);
+	exit;
+}
+$path = substr($uriPath, strlen(OPENPROV_PATH)) ?: '/';
+// Phones only ever GET (or HEAD) configs and files; nothing large comes in.
+if ((int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 65536) {
+	http_response_code(413);
+	exit;
+}
+
+// Basic auth: mod_php fills PHP_AUTH_*. Under php-fpm the header arrives via
+// the .htaccess rewrite (REDIRECT_ prefix after the internal redirect).
+$user = isset($_SERVER['PHP_AUTH_USER']) ? (string) $_SERVER['PHP_AUTH_USER'] : null;
+$pass = isset($_SERVER['PHP_AUTH_PW']) ? (string) $_SERVER['PHP_AUTH_PW'] : null;
+if ($user === null) {
+	$hdr = (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
+	if (stripos($hdr, 'basic ') === 0) {
+		$dec = base64_decode(substr($hdr, 6), true);
+		if ($dec !== false && str_contains($dec, ':')) {
+			[$user, $pass] = explode(':', $dec, 2);
+		}
+	}
+}
+$secure = !empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off';
+
+$bootstrap_settings = [
+	'freepbx_auth' => false,
+	'skip_astman' => true,
+	'include_compress' => false,
+	'cdrdb' => false,
+];
+$restrict_mods = ['openprov' => true];
+include '/etc/freepbx.conf';
+
+if ($path === \FreePBX\modules\Openprov\Web::PING) {
+	// Health check (fwconsole openprov web --check, Settings tab): proves
+	// Apache routes the path here and FreePBX bootstraps.
+	header('Content-Type: text/plain');
+	echo \FreePBX\modules\Openprov\Web::PING_BODY;
+	exit;
+}
+
+try {
+	$res = \FreePBX::Openprov()->provisionServer()->handle($path, (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), (string) ($_SERVER['REMOTE_ADDR'] ?? ''), $user, $pass, $secure);
+} catch (\Throwable $e) {
+	error_log('OpenProv: ' . $e->getMessage());
+	$res = ['status' => 500, 'headers' => [], 'body' => "internal error\n"];
+}
+
+http_response_code($res['status']);
+header_remove('X-Powered-By');
+foreach ($res['headers'] as $k => $v) {
+	header("$k: $v");
+}
+if (isset($res['file'])) {
+	// Stream large files (firmware is ~40-90 MB) instead of buffering them.
+	while (ob_get_level() > 0) {
+		ob_end_clean();
+	}
+	@set_time_limit(0);
+	readfile($res['file']);
+} else {
+	echo $res['body'];
+}

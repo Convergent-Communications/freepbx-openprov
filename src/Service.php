@@ -8,7 +8,7 @@ namespace FreePBX\modules\Openprov;
  */
 class Service
 {
-	public const VERSION = '0.1.2';
+	public const VERSION = '0.2.0';
 	private bool $deferSync = false;
 
 	public function __construct(
@@ -20,7 +20,7 @@ class Service
 		private Settings $settings,
 		private ConfigBuilder $builder,
 		private Notifier $notifier,
-		private WebServer $web
+		private Web $web
 	) {
 	}
 
@@ -56,20 +56,11 @@ class Service
 
 	public function setSettings(array $values): array
 	{
-		$fwKeys = ['https_port', 'http_port', 'firewall_zones'];
-		$fwBefore = array_map(fn ($k) => $this->settings->get($k), $fwKeys);
 		foreach ($values as $k => $v) {
 			if ($k === 'internal_host_effective' || $v === '********') {
 				continue;
 			}
 			$this->settings->set($k, $v);
-		}
-		if (array_map(fn ($k) => $this->settings->get($k), $fwKeys) !== $fwBefore) {
-			try {
-				$this->web->ensureFirewall();
-			} catch (\Throwable $e) {
-				// firewall module absent or refused; the README covers the manual step
-			}
 		}
 		$this->afterChange();
 		return $this->getSettings();
@@ -1690,21 +1681,16 @@ class Service
 		return $this->web->status();
 	}
 
-	public function webConfig(): string
+	/** Fetch /openprov/_ping through Apache, as a phone on the LAN would. */
+	public function webCheck(): array
 	{
-		return $this->web->config();
-	}
-
-	public function webInstall(): array
-	{
-		[$ok, $msg] = $this->web->install();
-		return ['ok' => $ok, 'message' => $msg];
+		return $this->web->check($this->settings->internalHost());
 	}
 
 	public function webUninstall(): array
 	{
-		[$ok, $msg] = $this->web->uninstall();
-		return ['ok' => $ok, 'message' => $msg];
+		$this->web->unpublish();
+		return ['ok' => true, 'message' => 'Removed ' . $this->web->link()];
 	}
 
 	// ---- validation helpers -------------------------------------------------

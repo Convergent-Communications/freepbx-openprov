@@ -20,13 +20,20 @@ class ProvisionServer
 	) {
 	}
 
-	public function handle(string $path, string $ua, string $ip, ?string $user, ?string $pass): array
+	/** $secure: the request came over HTTPS (htdocs/index.php). */
+	public function handle(string $path, string $ua, string $ip, ?string $user, ?string $pass, bool $secure = true): array
 	{
 		$path = '/' . ltrim(rawurldecode(parse_url($path, PHP_URL_PATH) ?? '/'), '/');
 		$log = ['ip' => $ip, 'ua' => $ua, 'path' => $path];
 
 		if (!Util::ipAllowed($ip, $this->settings->allowedNetworks())) {
 			return $this->deny(403, 'source address not allowed', $log);
+		}
+		// /openprov/ is on FreePBX's own web server, which also answers plain
+		// HTTP (port 80). Configs carry SIP passwords: with phone_scheme https,
+		// refuse plain HTTP before any credential is looked at.
+		if (!$secure && $this->settings->get('phone_scheme') === 'https') {
+			return $this->deny(403, 'HTTPS required', $log);
 		}
 		if (str_contains($path, '..') || str_contains($path, "\0")) {
 			return $this->deny(400, 'bad path', $log);

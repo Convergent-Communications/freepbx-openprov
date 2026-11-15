@@ -1030,11 +1030,9 @@
 	const SETTING_HELP = {
 		internal_host: 'Address phones on the LAN use (blank = auto-detected).',
 		external_host: 'Public hostname/IP for remote phones (template provisioning network "external").',
-		phone_scheme: 'https (recommended) or http (lab only; requires an HTTP port).',
-		https_port: 'Provisioning HTTPS port. Re-run the web install after changing ports or certificates.',
-		http_port: '0 disables plain HTTP.',
-		tls_cert: 'Certificate file (certman keeps them in /etc/asterisk/keys).',
-		tls_key: '', tls_chain: 'Optional intermediate chain.',
+		phone_scheme: 'https (recommended) or http (lab only). With https, plain-HTTP requests to /openprov/ are refused.',
+		https_port: 'FreePBX\'s HTTPS port (System Admin Port Management; default 443). Phones use /openprov/ on it. OpenProv has no port of its own. The certificate is FreePBX\'s (Certificate Manager).',
+		http_port: 'FreePBX\'s HTTP port, used only with phone_scheme http.',
 		bootstrap_user: 'Shared first-contact credential (DHCP option 66 / RPS). Only works for phones that are added and not yet claimed.',
 		bootstrap_pass: '',
 		allowed_networks: 'CIDRs allowed to provision (blank = any). E.g. 192.168.0.0/16, 10.8.0.0/24',
@@ -1051,7 +1049,6 @@
 		per_device_admin_password: 'Give every phone its own random 10-digit web admin password (derived from the MAC and a secret on this PBX; shown on each phone\'s page) instead of the shared one. A template or phone admin password still wins. Turning it on changes each phone\'s password at its next update.',
 		device_secret: 'Secret that per-device admin passwords are derived from. Never shown; changing it (CLI) changes every per-device password.',
 		vpn_provisioning_host: 'Address VPN phones on tunnel-bound models (T87W on 185.87.x) provision from once their tunnel is up. Blank = the VPN server\'s tunnel address (e.g. 10.8.0.1). Never the VPN endpoint address: those phones can\'t reach it while connected.',
-		firewall_zones: 'FreePBX firewall zones the provisioning port is opened in (custom service "OpenProv provisioning"). VPN phones arrive in the zone of tun0 (Internal by default). Comma-separated: trusted, internal, other, external.',
 		reboot_only_when_idle: 'Never reboot a phone that is on a call.',
 		reboot_window: 'Only reboot VPN phones inside this window, e.g. 01:00-05:00 (blank = any time).',
 	};
@@ -1068,8 +1065,11 @@
 		main.innerHTML = `
 			<h4>Provisioning server</h4>
 			<p>Bootstrap URL: <code>${esc(info.bootstrap_url)}</code> · user <code>${esc(s.bootstrap_user)}</code> · password <code>${esc(s.bootstrap_pass)}</code></p>
-			<p class="small">Web server: ${w.installed ? (w.current ? '<span class="text-success">installed and current</span>' : '<span class="text-warning">out of date</span>') : '<span class="text-danger">not installed</span>'} (HTTPS ${w.https_port}${w.http_port ? ', HTTP ' + w.http_port : ''}).
-			${w.current ? '' : `Run <code>${esc(w.command)}</code> as root.`} System Admin VPN server: ${info.vpn_server ? 'enabled' : 'off'}.</p>
+			<p class="small">Served at <code>${esc(w.path)}</code> on FreePBX's web server: ${w.published ? '<span class="text-success">published</span>' : `<span class="text-danger">not published</span> (run <code>${esc(w.command)}</code>)`}.
+			${w.legacy.present ? `<span class="text-danger">The old 0.1 vhost (port ${esc(w.legacy.ports.join(', '))}) is still installed: run <code>${esc(w.command)}</code> as root.</span>` : ''}
+			<button class="btn btn-default btn-sm" id="op-web-check">Test from the PBX</button> <span id="op-web-check-out"></span>
+			System Admin VPN server: ${info.vpn_server ? 'enabled' : 'off'}.
+			Phones reach it through the FreePBX firewall's web service (the zones that allow the FreePBX web ports).</p>
 			<div class="form-row">${rows}</div>
 			<p class="small text-muted">What the Convergent dashboard may change is on the <a href="#" data-tab="dashboard">Dashboard</a> tab.</p>
 			<button class="btn btn-primary" id="op-gs-save">Save settings</button>
@@ -1082,6 +1082,10 @@
 			<div class="form-row"><div class="col-md-4"><input class="form-control" id="op-epm-map" placeholder='{"SIP-T57W":"T87W"}'></div><div class="col-md-3"><select class="form-control" id="op-epm-tpl">${(await lookups()).templates.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></div>
 			<div class="col-md-5"><button class="btn btn-default" id="op-epm-dry">Preview</button> <button class="btn btn-default" id="op-epm-run">Import</button></div></div>
 			<pre class="op-pre mt-2" id="op-epm-out"></pre>`;
+		$('#op-web-check').onclick = (e) => guard(e.target, async () => {
+			const r = await api('web.check');
+			$('#op-web-check-out').innerHTML = `<span class="${r.ok ? 'text-success' : 'text-danger'}">${esc(r.message)}</span> <code>${esc(r.url)}</code>`;
+		});
 		$('#op-gs-save').onclick = (e) => guard(e.target, async () => {
 			const vals = {};
 			$$('[data-gs]').forEach((el) => (vals[el.dataset.gs] = el.value));

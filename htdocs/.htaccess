@@ -1,0 +1,11 @@
+# OpenProv provisioning (phones): every path under /openprov/ goes to
+# index.php. Only mod_rewrite directives, which FreePBX's web root already
+# allows (its /admin relies on them). See src/Web.php.
+DirectoryIndex index.php
+<IfModule mod_rewrite.c>
+	RewriteEngine On
+	RewriteBase /openprov/
+	# php-fpm doesn't pass the Authorization header on its own.
+	RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+	RewriteRule ^ index.php [END]
+</IfModule>

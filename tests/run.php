@@ -10,7 +10,7 @@ declare(strict_types=1);
 
 namespace FreePBX\modules\Openprov\Tests;
 
-use FreePBX\modules\Openprov\{Assets, Catalog, ConfigBuilder, Notifier, Pbx, ProvisionServer, Service, Settings, Store, Tar, Util, Vpn, WebServer};
+use FreePBX\modules\Openprov\{Assets, Catalog, ConfigBuilder, Notifier, Pbx, ProvisionServer, Service, Settings, Store, Tar, Util, Vpn, Web};
 use FreePBX\modules\Openprov\Brand\Yealink;
 use PDO;
 
@@ -219,7 +219,7 @@ function world(): object
 		$sent[] = [$ep, $event];
 		return ['ok' => true, 'message' => 'sent'];
 	});
-	$svc = new Service($store, $catalog, $pbx, $vpn, $assets, $settings, $builder, $notifier, new WebServer($settings, '/tmp'));
+	$svc = new Service($store, $catalog, $pbx, $vpn, $assets, $settings, $builder, $notifier, new Web($settings, '/nonexistent-webroot', dirname(__DIR__) . '/htdocs', ['run' => fn($c) => [1, ''], 'root' => false, 'settle' => 0]));
 	$server = new ProvisionServer($store, $catalog, $builder, $settings, $assets, $vpn);
 	return (object) compact('db', 'settings', 'store', 'catalog', 'pbx', 'vpn', 'assets', 'builder', 'svc', 'server', 'sent', 'dir');
 }
@@ -366,7 +366,7 @@ $tests['render: accounts, labels, keys, %NULL% clearing'] = function () {
 	eq('-5', $kv['local_time.time_zone']);
 	eq('United States-Eastern Time', $kv['local_time.time_zone_name']);
 	eq(['admin:24681357', 'user:1357'], $kv['static.security.user_password']);
-	eq('https://192.0.2.10:8443', $kv['static.auto_provision.server.url']);
+	eq('https://192.0.2.10/openprov', $kv['static.auto_provision.server.url']);
 	eq('c4fc22a1b2c3', $kv['static.auto_provision.server.username']);
 	eq('0', $kv['static.auto_provision.custom.protect'], 'server wins over phone-side edits');
 };
@@ -434,8 +434,7 @@ $tests['security: remote API never reveals secrets or reads server files; settin
 	file_put_contents($f, "root:x:0:0\n");
 	throws(fn() => (new \FreePBX\modules\Openprov\Api($w->svc, 'cli'))->call('asset.add', ['kind' => 'ringtone', 'name' => 'x.wav', 'path' => $f]), 'WAV');
 	@unlink($f);
-	throws(fn() => $w->settings->set('tls_key', "/etc/asterisk/keys/default.key\n  ErrorLog \"|/bin/sh\""), 'single line');
-	throws(fn() => $w->settings->set('tls_cert', '/etc/x"y'), 'file path');
+	throws(fn() => $w->settings->set('external_host', "pbx.example.com\nx"), 'single line');
 	throws(fn() => $w->settings->set('vpn_external_remote', 'host 1194 ; x'), 'host port');
 	$w->settings->set('allowed_networks', "10.0.0.0/8\n192.168.0.0/16");
 	eq('10.0.0.0/8,192.168.0.0/16', $w->settings->get('allowed_networks'));
@@ -578,12 +577,12 @@ $tests['render: tunnel-bound VPN phones provision through the tunnel'] = functio
 	// First contact from the LAN: server URL and SIP go to the tunnel, but the
 	// VPN profile must come from a direct address (no tunnel yet).
 	$cfg = kv($w->builder->render($d, '192.168.1.246')['text']);
-	ok(str_contains($cfg['static.auto_provision.server.url'], '://10.8.0.1:'), $cfg['static.auto_provision.server.url']);
+	ok(str_contains($cfg['static.auto_provision.server.url'], '://10.8.0.1/openprov'), $cfg['static.auto_provision.server.url']);
 	eq('10.8.0.1', $cfg['account.1.sip_server.1.address']);
 	ok(!str_contains($cfg['openvpn.url'], '10.8.0.1'), 'vpn tar not via the tunnel on first contact');
 	// Request through the tunnel: everything through the tunnel.
 	$cfg = kv($w->builder->render($d, '10.8.0.2')['text']);
-	ok(str_contains($cfg['openvpn.url'], '@10.8.0.1:'), $cfg['openvpn.url']);
+	ok(str_contains($cfg['openvpn.url'], '@10.8.0.1/openprov/'), $cfg['openvpn.url']);
 	// Server records the request IP, and sync renders reuse it (same hash as the phone got).
 	$r = $w->server->handle('/c4fc22a1b2c3.cfg', UA, '10.8.0.2', MAC, $pass);
 	eq(200, $r['status']);
@@ -597,9 +596,6 @@ $tests['render: tunnel-bound VPN phones provision through the tunnel'] = functio
 	$w->svc->saveDevice(['mac' => '80:5e:c0:a1:b2:c4', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '212']], 'settings' => ['vpn' => 'auto']]);
 	$cfg = kv($w->builder->render($w->store->deviceByMac('805ec0a1b2c4'), '192.168.1.126')['text']);
 	ok(!str_contains($cfg['static.auto_provision.server.url'], 'prov-vpn'), $cfg['static.auto_provision.server.url']);
-	throws(fn() => $w->settings->set('firewall_zones', 'internal,dmz'), 'dmz');
-	$w->settings->set('firewall_zones', 'Internal, other');
-	eq('internal,other', $w->settings->get('firewall_zones'));
 };
 
 $tests['template: parent_view shows what a child template inherits'] = function () {
@@ -1025,6 +1021,132 @@ $tests['signing: only the pinned release key is trusted; trust and untrust round
 	} finally {
 		exec('rm -rf ' . escapeshellarg($home));
 	}
+};
+
+// ---- web: /openprov path, no Apache config (incident 2026-11-15) ---------------
+
+function webFixture(bool $root, array $rcs = []): object
+{
+	$tmp = sys_get_temp_dir() . '/openprov-web-' . bin2hex(random_bytes(4));
+	mkdir("$tmp/www", 0777, true);
+	mkdir("$tmp/apache/sites-available", 0777, true);
+	mkdir("$tmp/apache/sites-enabled", 0777, true);
+	$cmds = new \ArrayObject();
+	// $rcs: command prefix => list of return codes, consumed in order (last one sticks)
+	$run = function (string $cmd) use ($cmds, &$rcs) {
+		$cmds[] = $cmd;
+		foreach ($rcs as $prefix => &$list) {
+			if (str_starts_with($cmd, $prefix)) {
+				return [count($list) > 1 ? array_shift($list) : $list[0], ''];
+			}
+		}
+		return [0, ''];
+	};
+	$kv = [];
+	$settings = new Settings(fn($k) => $kv[$k] ?? null, function ($k, $v) use (&$kv) { $kv[$k] = $v; });
+	$web = new Web($settings, "$tmp/www", dirname(__DIR__) . '/htdocs', ['apache_dir' => "$tmp/apache", 'run' => $run, 'root' => $root, 'settle' => 0]);
+	return (object) compact('tmp', 'cmds', 'web', 'settings');
+}
+
+function legacyVhost(object $f): void
+{
+	file_put_contents($f->web->legacyConf(), "Listen 8443\n<VirtualHost *:8443>\n</VirtualHost>\n");
+	symlink($f->web->legacyConf(), $f->web->legacyLink());
+}
+
+$tests['web: /openprov is a symlink in the web root; a foreign entry is left alone'] = function () {
+	$f = webFixture(false);
+	ok(!$f->web->published());
+	[$ok] = $f->web->publish();
+	ok($ok && $f->web->published(), 'published');
+	eq(realpath(dirname(__DIR__) . '/htdocs'), realpath("$f->tmp/www/openprov"));
+	[$ok] = $f->web->publish();
+	ok($ok, 'idempotent');
+	$f->web->unpublish();
+	ok(!file_exists("$f->tmp/www/openprov"), 'unpublished');
+	mkdir("$f->tmp/www/openprov");
+	[$ok, $msg] = $f->web->publish();
+	ok(!$ok && str_contains($msg, "isn't OpenProv's"), $msg);
+	$f->web->unpublish();
+	ok(is_dir("$f->tmp/www/openprov"), 'never deletes what it did not create');
+	eq([], $f->cmds->getArrayCopy(), 'publishing runs no commands');
+	exec('rm -rf ' . escapeshellarg($f->tmp));
+};
+
+$tests['web: the 0.1 vhost is removed only as root, and Apache is brought back up'] = function () {
+	// Not root (GUI): nothing touched.
+	$f = webFixture(false);
+	legacyVhost($f);
+	eq(['present' => true, 'enabled' => true, 'ports' => [8443]], $f->web->legacy());
+	[$ok, $msg] = $f->web->removeLegacy();
+	ok(!$ok && str_contains($msg, 'as root'), $msg);
+	ok(is_file($f->web->legacyConf()) && is_link($f->web->legacyLink()), 'files untouched');
+	eq([], $f->cmds->getArrayCopy(), 'no commands as non-root');
+
+	// Root, Apache running: delete, configtest, reload, verify.
+	$f = webFixture(true);
+	legacyVhost($f);
+	[$ok, $msg] = $f->web->removeLegacy();
+	ok($ok, $msg);
+	ok(!$f->web->legacy()['present'], 'gone');
+	eq(['apache2ctl configtest', 'systemctl is-active --quiet apache2', 'systemctl reload apache2', 'systemctl is-active --quiet apache2'], $f->cmds->getArrayCopy(), 'reload, then check it stayed up');
+
+	// Root, Apache crash-looping on the bind error (the incident): restart it.
+	$f = webFixture(true, ['systemctl is-active' => [3, 0]]);
+	legacyVhost($f);
+	[$ok, $msg] = $f->web->removeLegacy();
+	ok($ok, $msg);
+	ok(in_array('systemctl restart apache2', $f->cmds->getArrayCopy(), true), 'restarted');
+	ok(!in_array('systemctl reload apache2', $f->cmds->getArrayCopy(), true), 'no reload of a dead Apache');
+
+	// Root, the remaining config is broken (someone else's): never reload.
+	$f = webFixture(true, ['apache2ctl configtest' => [1]]);
+	legacyVhost($f);
+	[$ok, $msg] = $f->web->removeLegacy();
+	ok(!$ok && str_contains($msg, 'configtest'), $msg);
+	ok(!$f->web->legacy()['present'], 'our file is still removed');
+	eq(['apache2ctl configtest'], $f->cmds->getArrayCopy(), 'no reload or restart after a failed configtest');
+
+	// Root, Apache dies after the reload: one restart, and a failure is reported.
+	$f = webFixture(true, ['systemctl is-active' => [0, 3, 3]]);
+	legacyVhost($f);
+	[$ok, $msg] = $f->web->removeLegacy();
+	ok(!$ok && str_contains($msg, 'not running'), $msg);
+	eq(1, count(array_filter($f->cmds->getArrayCopy(), fn($c) => $c === 'systemctl restart apache2')));
+
+	// Nothing to remove: no commands at all.
+	$f = webFixture(true);
+	[$ok] = $f->web->removeLegacy();
+	ok($ok);
+	eq([], $f->cmds->getArrayCopy());
+};
+
+$tests['web: no code writes Apache config, adds Listen or enables sites'] = function () {
+	$root = dirname(__DIR__);
+	$files = array_merge(glob("$root/*.php"), glob("$root/src/*.php"), glob("$root/src/*/*.php"), glob("$root/Console/*.php"), glob("$root/Api/Gql/*.php"), glob("$root/htdocs/*.php"));
+	foreach ($files as $file) {
+		$src = (string) file_get_contents($file);
+		foreach (['/a2ensite/', '/a2enmod/', '/apache2?ctl\s+(-k\s+)?(graceful|restart|start)/', '/"Listen\s/', "/'Listen\\s/", '/<VirtualHost/', '/file_put_contents\([^;]*(apache|sites-)/i', '/symlink\([^;]*(apache|sites-)/i'] as $re) {
+			ok(!preg_match($re, $src), basename($file) . " matches $re");
+		}
+	}
+	ok(!is_dir("$root/web"), 'the 0.1 vhost document root is gone');
+};
+
+$tests['server: plain HTTP is refused unless phone_scheme is http; URLs carry /openprov'] = function () {
+	$w = world();
+	phone($w);
+	eq(403, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', 'boot', 'bootpass', false)['status'], 'HTTP refused with https scheme');
+	eq(200, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', 'boot', 'bootpass', true)['status']);
+	$w->settings->set('https_port', 8444);
+	eq('https://192.0.2.10:8444/openprov', $w->builder->baseUrl('internal'));
+	$w->settings->set('phone_scheme', 'http');
+	eq('http://192.0.2.10/openprov', $w->builder->baseUrl('internal'), 'port 80 is implicit');
+	ok($w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', 'boot', 'bootpass', false)['status'] !== 403, 'HTTP allowed with http scheme');
+	throws(fn() => $w->settings->set('https_port', 0), 'TCP port');
+	$w->settings->set('firewall_zones', 'internal');
+	$w->settings->set('tls_cert', '/x');
+	ok(!array_key_exists('firewall_zones', $w->settings->all()), 'retired settings are ignored');
 };
 
 // ---- runner --------------------------------------------------------------------

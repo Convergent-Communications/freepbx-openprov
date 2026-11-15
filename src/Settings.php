@@ -11,11 +11,11 @@ class Settings
 		'internal_host' => '',          // blank = auto-detect primary IPv4
 		'external_host' => '',          // public hostname/IP for remote phones
 		'phone_scheme' => 'https',      // scheme written into phone configs
-		'https_port' => 8443,
-		'http_port' => 0,               // 0 = no plain-HTTP listener
-		'tls_cert' => '/etc/asterisk/keys/default.crt',
-		'tls_key' => '/etc/asterisk/keys/default.key',
-		'tls_chain' => '',
+		// Ports of FreePBX's own web server (Apache, as System Admin Port
+		// Management configures it) written into phone URLs. OpenProv has no
+		// listener of its own: phones use /openprov/ on these ports.
+		'https_port' => 443,
+		'http_port' => 80,              // used only with phone_scheme http
 		'bootstrap_user' => '',         // generated on install
 		'bootstrap_pass' => '',
 		'allowed_networks' => '',       // newline/comma separated CIDRs; blank = any
@@ -51,11 +51,15 @@ class Settings
 		// provisioning is bound to the tunnel, e.g. T87W 185.87.x). Blank = the
 		// VPN server's tunnel address (10.8.0.1). Must not be the VPN endpoint IP.
 		'vpn_provisioning_host' => '',
-		// FreePBX firewall zones the provisioning port is opened in (custom service).
-		'firewall_zones' => 'internal,other',
 		'reboot_only_when_idle' => true,
 		'reboot_window' => '',          // "HH:MM-HH:MM" (PBX local time); blank = any time
 	];
+
+	/**
+	 * Settings of the 0.1.x Apache vhost (its certificate and firewall zones).
+	 * Ignored when set, so older API callers keep working.
+	 */
+	public const RETIRED = ['tls_cert', 'tls_key', 'tls_chain', 'firewall_zones'];
 
 	/** @var callable */
 	private $get;
@@ -95,6 +99,9 @@ class Settings
 
 	public function set(string $key, $value): void
 	{
+		if (in_array($key, self::RETIRED, true)) {
+			return;
+		}
 		if (!array_key_exists($key, self::DEFAULTS)) {
 			throw new \InvalidArgumentException("Unknown setting '$key'");
 		}
@@ -104,6 +111,9 @@ class Settings
 				throw new \InvalidArgumentException("Setting '$key' must be a number");
 			}
 			$value = (int) $value;
+			if (in_array($key, ['https_port', 'http_port'], true) && ($value < 1 || $value > 65535)) {
+				throw new \InvalidArgumentException("$key must be a TCP port (1-65535): the port FreePBX's web server listens on");
+			}
 		} elseif ($type === 'boolean') {
 			$value = filter_var($value, FILTER_VALIDATE_BOOLEAN) ? '1' : '0';
 		} else {
@@ -111,14 +121,11 @@ class Settings
 			if ($key === 'allowed_networks') {
 				$value = implode(',', array_filter(array_map('trim', preg_split('/[\s,]+/', $value))));
 			}
-			// Settings end up in Apache's config, phone configs and shell
+			// Settings end up in phone configs and shell
 			// arguments: no control characters (newlines would inject lines).
 			if (preg_match('/[\x00-\x1f\x7f]/', $value)) {
 				throw new \InvalidArgumentException("Setting '$key' must be a single line without control characters");
 			}
-		}
-		if (in_array($key, ['tls_cert', 'tls_key', 'tls_chain'], true) && $value !== '' && !preg_match('#^/[A-Za-z0-9_./-]+$#', $value)) {
-			throw new \InvalidArgumentException("$key must be an absolute file path (letters, digits, _ . / - only)");
 		}
 		if (in_array($key, ['internal_host', 'external_host', 'vpn_provisioning_host'], true) && $value !== '' && !preg_match('/^[A-Za-z0-9.:-]+$/', $value)) {
 			throw new \InvalidArgumentException("$key must be a host name or IP address");
@@ -128,14 +135,6 @@ class Settings
 		}
 		if ($key === 'vpn_update_method' && !in_array($value, ['auto', 'reboot', 'notify', 'none'], true)) {
 			throw new \InvalidArgumentException('vpn_update_method must be auto, reboot, notify or none');
-		}
-		if ($key === 'firewall_zones') {
-			$zones = array_filter(array_map('trim', explode(',', strtolower($value))));
-			$bad = array_diff($zones, ['trusted', 'internal', 'other', 'external']);
-			if ($bad) {
-				throw new \InvalidArgumentException('firewall_zones: unknown zone ' . implode(', ', $bad) . ' (use trusted, internal, other, external)');
-			}
-			$value = implode(',', $zones);
 		}
 		if ($key === 'vpn_provisioning_host' && $value !== '' && !preg_match('/^[a-z0-9.-]+$/i', $value)) {
 			throw new \InvalidArgumentException('vpn_provisioning_host must be a host name or IP address');

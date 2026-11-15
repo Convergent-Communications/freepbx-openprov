@@ -54,8 +54,9 @@ arguments can be JSON (`devices='["c4fc22a1b2c3"]'`).
 | `adopt` | `mac, model, extension?, template?` | |
 | `export.csv` / `import.csv` | `csv` | Columns: `mac,model,template,name,extension,extension2,enabled` |
 | `import.epm` | `dryRun?=true, template?, modelMap?` | Copies commercial EPM mappings across |
-| `web.status` / `web.config` | | Provisioning vhost |
-| `web --install` / `web --uninstall` (CLI only, as root) | | Writes and enables the Apache vhost |
+| `web.status` | | Whether `/openprov/` is published; any 0.1 vhost left |
+| `web.check` | | Fetches `/openprov/_ping` through Apache as a phone would |
+| `web --install` / `--uninstall` / `--check` (CLI only) | | Publish/unpublish the `/openprov` symlink; as root `--install` also removes the 0.1 vhost. Never writes Apache config |
 
 ## Keys
 

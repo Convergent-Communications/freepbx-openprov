@@ -2,7 +2,7 @@
 	<rawname>openprov</rawname>
 	<repo>unsupported</repo>
 	<name>OpenProv Phone Provisioning</name>
-	<version>0.1.2</version>
+	<version>0.2.0</version>
 	<publisher>Convergent</publisher>
 	<license>GPLv3+</license>
 	<licenselink>https://www.gnu.org/licenses/gpl-3.0.txt</licenselink>
@@ -10,6 +10,7 @@
 	<description>Open-source phone provisioning for FreePBX. Renders Yealink configs on demand over HTTPS with per-device credentials, maps users and feature codes onto line keys, pushes System Admin VPN profiles, wallpapers, ringtones and firmware, and re-syncs phones automatically when their configuration changes. Drivable from the GUI, fwconsole and GraphQL.</description>
 	<more-info>https://github.com/Convergent-Communications/freepbx-openprov</more-info>
 	<changelog>
+		*0.2.0* Phones are served at /openprov/ on FreePBX's own web server (443). OpenProv no longer writes Apache configuration, adds Listen ports or reloads Apache. Upgrading as root removes the 0.1 vhost on 8443 and its firewall service. Phones that already have a :8443 provisioning URL must be pointed at https://host/openprov (see docs/UPGRADE-0.2.md).
 		*0.1.0* Initial release.
 	</changelog>
 	<menuitems>

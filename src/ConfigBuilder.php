@@ -203,7 +203,7 @@ class ConfigBuilder
 		}
 		$auth = $creds ? rawurlencode($creds['user']) . ':' . rawurlencode($creds['pass']) . '@' : '';
 		$default = $scheme === 'https' ? 443 : 80;
-		return $scheme . '://' . $auth . $host . ($port && $port !== $default ? ':' . $port : '');
+		return $scheme . '://' . $auth . $host . ($port && $port !== $default ? ':' . $port : '') . Web::PATH;
 	}
 
 	/** Resolve the VPN client for a device, or null. */

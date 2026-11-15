@@ -5,10 +5,17 @@ $web = $info['web'];
 <div class="container-fluid openprov" id="openprov-app" data-version="<?= htmlspecialchars($info['version']) ?>">
 	<div class="op-header">
 		<h1>OpenProv <small class="text-muted">phone provisioning <?= htmlspecialchars($info['version']) ?></small></h1>
-		<?php if (!$web['installed'] || !$web['current']): ?>
+		<?php if (!empty($web['legacy']['present'])): ?>
+			<div class="alert alert-danger">
+				The OpenProv 0.1 Apache vhost is still installed (<code>/etc/apache2/sites-enabled/openprov.conf</code>, port <?= htmlspecialchars(implode(', ', $web['legacy']['ports']) ?: '?') ?>).
+				OpenProv no longer uses it, and it can stop Apache from starting if another service takes that port.
+				Remove it: run <code><?= htmlspecialchars($web['command']) ?></code> as root on the PBX.
+			</div>
+		<?php endif; ?>
+		<?php if (!$web['published']): ?>
 			<div class="alert alert-warning">
-				The provisioning web server is <?= $web['installed'] ? 'out of date' : 'not installed' ?>.
-				Run <code><?= htmlspecialchars($web['command']) ?></code> as root on the PBX.
+				Phones can't reach OpenProv: <code><?= htmlspecialchars($web['link']) ?></code> is missing.
+				Run <code><?= htmlspecialchars($web['command']) ?></code> on the PBX.
 			</div>
 		<?php endif; ?>
 	</div>

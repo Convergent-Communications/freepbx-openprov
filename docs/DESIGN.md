@@ -27,36 +27,56 @@ what was chosen, why, and what was rejected.
   - It doesn't clash with EPM, autoprov or CalNu files in `/tftpboot`.
 - **Cost:** each fetch runs PHP and SQL. This is trivial at phone scale.
 
-## D3. Its own Apache virtual host, HTTPS first, on its own port
+## D3. A path on FreePBX's own web server, not a vhost or port of its own (revised 2026-11-15)
 
-- **Chosen:** `fwconsole openprov web --install` writes
-  `/etc/apache2/sites-enabled/openprov.conf`. It defines an HTTPS listener
-  (default 8443, using certman's default certificate unless configured) and an
-  optional HTTP listener (default off; port 8088 when enabled). Every path goes
-  to `web/prov.php`; nothing else on the box is reachable through it. Writing
-  Apache config needs root, so module install calls it only when running as
-  root; otherwise the GUI and CLI show the one command to run.
-- **Why a separate port rather than FreePBX's 443/80:**
-  - **Firewall exposure.** Remote phones must reach provisioning from the
-    internet. FreePBX's 443 is the admin GUI. A dedicated port can be opened to
-    the world (or to customer networks) without exposing the admin GUI or UCP.
-  - **Isolation.** The vhost serves exactly one script, ignores every
-    `.htaccess` under /admin, and can have its own TLS settings, logs and
-    certificate. Breaking or locking down the admin site doesn't affect
-    phones, and the reverse.
-  - **No collision** with System Admin's provisioning ports (84 and others) or
-    with EPM, which keep working for older phones.
-  - **Any port works.** It's a setting, so 443 is fine on a box with a
-    dedicated IP or no admin GUI on 443.
-- **Why HTTPS:** TFTP is ruled out, and plain HTTP sends SIP passwords in the
-  clear.
-- **Certificates (hardware finding, 2026-11-12):**
-  - The T57W (96.87.0.20) refuses a self-signed certificate by default ("Only
-    Accept Trusted Certificates"). The T87W accepted it.
-  - Production therefore needs a publicly trusted certificate on the
-    provisioning vhost (certman / Let's Encrypt for the PBX hostname), or the
-    CA pushed to phones beforehand (RPS / factory config).
-- **HTTP mode:** for labs only. It is off by default.
+- **Chosen:** phones reach OpenProv at `/openprov/` on the web server FreePBX
+  already runs, on its existing ports (443/80, or whatever System Admin Port
+  Management set). `<webroot>/openprov` is a symlink to the module's `htdocs/`;
+  its `.htaccess` (mod_rewrite only) sends every path to `htdocs/index.php`,
+  which refuses requests that don't come through that path. Install creates
+  the symlink as whichever user runs it. No root is needed, and nothing in
+  `/etc/apache2` is written.
+- **Hard rule:** OpenProv never writes Apache configuration, adds `Listen`
+  directives, or reloads/restarts Apache for its own sake. A test
+  (`web: no code writes Apache config…`) enforces it.
+- **Why (incident 2026-11-15):** 0.1.x installed its own vhost with
+  `Listen 8443`. On a box where Sangoma Connect's Node server already held
+  `127.0.0.1:8443`, the graceful restart failed with `AH00072 … Address already
+  in use`, and Apache crash-looped under systemd with the whole FreePBX GUI
+  down. `apachectl configtest` passed, because a port conflict only shows at
+  bind time. Any `Listen` a module adds can do this: Apache refuses to start
+  if one of its sockets can't bind. A path on the existing listeners can't.
+- **Why the 0.1 reasons for a separate port don't hold:**
+  - *Firewall exposure* (opening provisioning to the internet without the
+    admin GUI): remote phones provision through the System Admin VPN (D10), so
+    the web port never needs to face the internet. A separate port that is
+    open to the world mostly exposes the per-device credential scheme (D4),
+    which is the same over 443.
+  - *Isolation:* `index.php` serves only ProvisionServer. `/admin`'s
+    `.htaccess` is untouched, and OpenProv's directory has its own.
+  - *Own certificate:* phones get FreePBX's certificate (Certificate Manager,
+    as for the GUI and UCP), so Let's Encrypt renewals are picked up with no
+    extra step.
+  - *Phone requirements:* none. Yealink takes a path in
+    `auto_provision.server.url` / DHCP option 66, auth is HTTP Basic handled in
+    PHP, and there are no client certificates (D4).
+- **HTTPS:** the web server also answers plain HTTP on port 80, so with
+  `phone_scheme = https` (the default) ProvisionServer refuses any non-HTTPS
+  request with 403 before it looks at credentials. TFTP is ruled out.
+- **Certificates (hardware finding, 2026-11-12):** the T57W refuses a
+  self-signed certificate by default ("Only Accept Trusted Certificates"); the
+  T87W accepted it. Production needs a publicly trusted certificate on
+  FreePBX's web server (Certificate Manager / Let's Encrypt), or the CA pushed
+  to the phones beforehand.
+- **Rejected:**
+  - *Own vhost and port (0.1.x)*: see the incident.
+  - *Own Node/pm2 service*: OpenProv is PHP that needs FreePBX in-process
+    (D1, D2). A second server would only re-implement auth and streaming.
+- **Upgrade:** see `UPGRADE-0.2.md`. Removing the 0.1 vhost is the only
+  remaining Apache action. It runs as root from fwconsole only (module
+  install/upgrade, `fwconsole reload`, `fwconsole openprov web --install`),
+  only ever deletes OpenProv's own file, and checks that Apache is running
+  afterwards (starting it if it was down).
 
 ## D4. Per-device credentials, with trust on first use
 
@@ -255,10 +275,10 @@ picks the host and port written into `auto_provision.server.url`.
   (for example 10.8.0.1). The phone keeps provisioning through the tunnel after
   first contact, and the provisioning port never has to face the internet.
   Tunnel-bound models are forced onto this network (D8a).
-- **Firewall:** install registers a FreePBX firewall custom service, "OpenProv
-  provisioning" (the HTTPS and HTTP ports), in the zones from `firewall_zones`
-  (default internal and other; `tun0` is Internal). Changing the ports or
-  zones in Settings updates it.
+- **Firewall:** phones use FreePBX's web port, which the FreePBX firewall
+  already models (Web Management). `tun0` is Internal, which allows it. 0.1.x
+  had its own custom service, "OpenProv provisioning" (8443); the 0.2 upgrade
+  removes it.
 
 ## D10a. Server config wins over phone-side edits
 

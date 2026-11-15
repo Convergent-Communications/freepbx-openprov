@@ -33,7 +33,7 @@ at 192.168.1.246, extension 212.
 
 | Feature | Result |
 |---|---|
-| HTTPS provisioning (certman self-signed cert, port 8443) | ✅ The T87W accepted the certificate with factory trust settings |
+| HTTPS provisioning (certman self-signed cert, port 8443; 0.1.x vhost, replaced by `/openprov/` on 443 in 0.2.0) | ✅ The T87W accepted the certificate with factory trust settings |
 | Bootstrap credential → per-device credential | ✅ First fetch used the bootstrap credential, the next used the phone's own. Bootstrap refused after that |
 | User-Agent MAC check | ✅ 403 on a mismatch |
 | Rendered config: account, time zone, passwords | ✅ Registered, correct local time |
@@ -52,9 +52,11 @@ at 192.168.1.246, extension 212.
 | T87W VPN bring-up from factory reset (2026-11-12) | ✅ Bootstrap over the LAN → claimed → VPN profile over the LAN → tunnel up with no reboot → re-provisioned from 10.8.0.2 about 4 s later → SIP registered via the tunnel. Needed the lab's self-signed cert uploaded to the phone's Trusted Certificates first: a reset T87W only accepts trusted certs, so the TLS handshake failed silently |
 | T87W check-sync with the VPN up, provisioning URL = tunnel (OpenProv default for the model) | ✅ All files fetched through the tunnel within 1–2 s; status back to `idle` |
 | Updating a VPN phone with a web-API reboot through the tunnel (10.8.0.2) | ✅ The phone rebooted. Boot-time provisioning races the VPN coming up (Yealink issue) |
-| FreePBX firewall | ⚠️ With the FreePBX firewall on, OpenProv's port (8443) must be added as a custom service (Connectivity → Firewall → Services → Custom Services) for every zone phones provision from. On the lab, tun0 (VPN) is in the Internal zone, which allowed EPM's port 84 but dropped 8443. The LAN worked only because it's trusted. Now registered automatically on install and when the port or zone settings change (service "OpenProv provisioning", zones from `firewall_zones`). Verified on the lab: an iptables/nft accept rule for 8443 |
+| FreePBX firewall | ⚠️ With the FreePBX firewall on, OpenProv's port (8443) must be added as a custom service (Connectivity → Firewall → Services → Custom Services) for every zone phones provision from. On the lab, tun0 (VPN) is in the Internal zone, which allowed EPM's port 84 but dropped 8443. The LAN worked only because it's trusted. 0.1.x registered it automatically. Since 0.2.0 phones use FreePBX's web port, covered by the firewall's Web Management service, and the upgrade removes the custom service |
 | GraphQL reads and the `openprovAction` mutation with asterisk-server's OAuth client | ✅ |
 | GUI: list, edit, save (Playwright) | ✅ |
+
+For the 0.2.0 move from the 8443 vhost to `/openprov/` (incident 2026-11-15), see the test plan in [UPGRADE-0.2.md](UPGRADE-0.2.md).
 
 ## Manual checks worth repeating on a new firmware or model
 

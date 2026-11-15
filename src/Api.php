@@ -11,7 +11,7 @@ class Api
 	public const READ_ONLY = [
 		'info', 'settings.get', 'models', 'schema', 'keytypes', 'targets', 'extensions', 'vpn.clients',
 		'templates.list', 'template.get', 'devices.list', 'device.get', 'render', 'devices.showing', 'devices.forExtension',
-		'assets.list', 'events', 'discovered', 'export.csv', 'web.status', 'web.config',
+		'assets.list', 'events', 'discovered', 'export.csv', 'web.status', 'web.check',
 		'dashboard.policy', 'features.list', 'device.sync', 'ringtones.builtin', 'extension.get',
 	];
 
@@ -76,7 +76,7 @@ class Api
 			'import.csv' => '{csv}',
 			'import.epm' => '{dryRun?: bool (default true), template?, modelMap?: {"SIP-T57W": "T87W"}}',
 			'web.status' => '',
-			'web.config' => '',
+			'web.check' => '',
 		];
 	}
 
@@ -194,7 +194,7 @@ class Api
 			case 'import.csv': return $s->importDevicesCsv((string) $need('csv'));
 			case 'import.epm': return $s->importEpm($bool('dryRun', true), $a['template'] ?? null, (array) ($a['modelMap'] ?? []));
 			case 'web.status': return $s->webStatus();
-			case 'web.config': return $s->webConfig();
+			case 'web.check': return $s->webCheck();
 		}
 		throw new \InvalidArgumentException("Unknown action '$action'");
 	}

@@ -15,6 +15,16 @@ class Restore extends Base\RestoreBase
 		}
 		if (!empty($configs['kvstore']) && is_array($configs['kvstore'])) {
 			$this->importKVStore($configs['kvstore']);
+			// A 0.1.x backup carries the 8443 vhost's port settings: migrate
+			// them again so phone URLs point at /openprov on FreePBX's ports.
+			if (!str_contains((string) json_encode($configs['kvstore']), 'web_layout')) {
+				try {
+					$bmo = $this->FreePBX->Openprov;
+					$bmo->setConfig('web_layout', false);
+					$bmo->migrateSettings();
+				} catch (\Throwable $e) {
+				}
+			}
 		}
 		foreach ($this->getFiles() as $file) {
 			$source = $this->tmpdir . '/files' . $file->getPathTo() . '/' . $file->getFilename();

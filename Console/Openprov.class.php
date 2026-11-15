@@ -25,8 +25,9 @@ class Openprov extends Command
 			->addArgument('args', InputArgument::IS_ARRAY | InputArgument::OPTIONAL, 'key=value arguments (values may be JSON)')
 			->addOption('data', 'd', InputOption::VALUE_REQUIRED, 'JSON object of arguments ("-" reads stdin)')
 			->addOption('compact', 'c', InputOption::VALUE_NONE, 'Single-line JSON output')
-			->addOption('install', null, InputOption::VALUE_NONE, 'With "web": install/refresh the provisioning vhost (root)')
-			->addOption('uninstall', null, InputOption::VALUE_NONE, 'With "web": remove the provisioning vhost (root)')
+			->addOption('install', null, InputOption::VALUE_NONE, 'With "web": publish /openprov and remove the 0.1.x Apache vhost (root for the vhost)')
+			->addOption('uninstall', null, InputOption::VALUE_NONE, 'With "web": unpublish /openprov')
+			->addOption('check', null, InputOption::VALUE_NONE, 'With "web": fetch /openprov/_ping through Apache as a phone would')
 			->addOption('remove', null, InputOption::VALUE_NONE, 'With "trust-key": stop trusting the release key (root)')
 			->addOption('status', null, InputOption::VALUE_NONE, 'With "trust-key": only show whether the release key is trusted');
 	}
@@ -47,13 +48,18 @@ class Openprov extends Command
 		}
 		if ($action === 'web') {
 			if ($input->getOption('install')) {
-				$r = $svc->webInstall();
-				$output->writeln(($r['ok'] ? '<info>' : '<error>') . $r['message'] . ($r['ok'] ? '</info>' : '</error>'));
-				return $r['ok'] ? 0 : 1;
+				[$ok, $msg] = $bmo->webInstall();
+				$output->writeln(($ok ? '<info>' : '<error>') . $msg . ($ok ? '</info>' : '</error>'));
+				return $ok ? 0 : 1;
 			}
 			if ($input->getOption('uninstall')) {
 				$r = $svc->webUninstall();
 				$output->writeln($r['message']);
+				return $r['ok'] ? 0 : 1;
+			}
+			if ($input->getOption('check')) {
+				$r = $svc->webCheck();
+				$output->writeln(($r['ok'] ? '<info>' : '<error>') . $r['message'] . ' (' . $r['url'] . ')' . ($r['ok'] ? '</info>' : '</error>'));
 				return $r['ok'] ? 0 : 1;
 			}
 			$output->writeln(json_encode($svc->webStatus(), $flags));

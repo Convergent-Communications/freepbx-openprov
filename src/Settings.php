@@ -11,11 +11,16 @@ class Settings
 		'internal_host' => '',          // blank = auto-detect primary IPv4
 		'external_host' => '',          // public hostname/IP for remote phones
 		'phone_scheme' => 'https',      // scheme written into phone configs
-		// Ports of FreePBX's own web server (Apache, as System Admin Port
-		// Management configures it) written into phone URLs. OpenProv has no
-		// listener of its own: phones use /openprov/ on these ports.
-		'https_port' => 443,
-		'http_port' => 80,              // used only with phone_scheme http
+		// How phones reach /openprov over HTTPS (DESIGN.md D3):
+		//  auto    - FreePBX's own web server if it serves HTTPS (System Admin
+		//            Port Management or Apache's 443), else OpenProv's HTTPS
+		//            service (pm2) on service_port
+		//  freepbx - FreePBX's web server only
+		//  service - OpenProv's HTTPS service only
+		'https_mode' => 'auto',
+		'https_port' => 0,              // FreePBX's HTTPS port; 0 = detect
+		'service_port' => 8449,         // OpenProv's HTTPS service (pm2), when used
+		'http_port' => 80,              // FreePBX's HTTP port, used only with phone_scheme http
 		'bootstrap_user' => '',         // generated on install
 		'bootstrap_pass' => '',
 		'allowed_networks' => '',       // newline/comma separated CIDRs; blank = any
@@ -51,15 +56,18 @@ class Settings
 		// provisioning is bound to the tunnel, e.g. T87W 185.87.x). Blank = the
 		// VPN server's tunnel address (10.8.0.1). Must not be the VPN endpoint IP.
 		'vpn_provisioning_host' => '',
+		// FreePBX firewall zones OpenProv's HTTPS service port is opened in
+		// (custom service). Not used when phones use FreePBX's web server.
+		'firewall_zones' => 'internal,other',
 		'reboot_only_when_idle' => true,
 		'reboot_window' => '',          // "HH:MM-HH:MM" (PBX local time); blank = any time
 	];
 
 	/**
-	 * Settings of the 0.1.x Apache vhost (its certificate and firewall zones).
-	 * Ignored when set, so older API callers keep working.
+	 * Settings of the 0.1.x Apache vhost's certificate (now Certificate
+	 * Manager's). Ignored when set, so older API callers keep working.
 	 */
-	public const RETIRED = ['tls_cert', 'tls_key', 'tls_chain', 'firewall_zones'];
+	public const RETIRED = ['tls_cert', 'tls_key', 'tls_chain'];
 
 	/** @var callable */
 	private $get;
@@ -111,8 +119,14 @@ class Settings
 				throw new \InvalidArgumentException("Setting '$key' must be a number");
 			}
 			$value = (int) $value;
-			if (in_array($key, ['https_port', 'http_port'], true) && ($value < 1 || $value > 65535)) {
-				throw new \InvalidArgumentException("$key must be a TCP port (1-65535): the port FreePBX's web server listens on");
+			if ($key === 'http_port' && ($value < 1 || $value > 65535)) {
+				throw new \InvalidArgumentException('http_port must be a TCP port (1-65535): the port FreePBX\'s web server listens on');
+			}
+			if ($key === 'https_port' && ($value < 0 || $value > 65535)) {
+				throw new \InvalidArgumentException('https_port must be 0 (detect) or the TCP port FreePBX\'s web server serves HTTPS on');
+			}
+			if ($key === 'service_port' && ($value < 1025 || $value > 65535)) {
+				throw new \InvalidArgumentException('service_port must be 1025-65535 (the service runs as asterisk, which cannot bind lower ports)');
 			}
 		} elseif ($type === 'boolean') {
 			$value = filter_var($value, FILTER_VALIDATE_BOOLEAN) ? '1' : '0';
@@ -136,6 +150,17 @@ class Settings
 		if ($key === 'vpn_update_method' && !in_array($value, ['auto', 'reboot', 'notify', 'none'], true)) {
 			throw new \InvalidArgumentException('vpn_update_method must be auto, reboot, notify or none');
 		}
+		if ($key === 'https_mode' && !in_array($value, ['auto', 'freepbx', 'service'], true)) {
+			throw new \InvalidArgumentException('https_mode must be auto, freepbx or service');
+		}
+		if ($key === 'firewall_zones') {
+			$zones = array_filter(array_map('trim', explode(',', strtolower($value))));
+			$bad = array_diff($zones, ['trusted', 'internal', 'other', 'external']);
+			if ($bad) {
+				throw new \InvalidArgumentException('firewall_zones: unknown zone ' . implode(', ', $bad) . ' (use trusted, internal, other, external)');
+			}
+			$value = implode(',', $zones);
+		}
 		if ($key === 'vpn_provisioning_host' && $value !== '' && !preg_match('/^[a-z0-9.-]+$/i', $value)) {
 			throw new \InvalidArgumentException('vpn_provisioning_host must be a host name or IP address');
 		}
@@ -149,6 +174,33 @@ class Settings
 			throw new \InvalidArgumentException("Do not use 'admin': recent Yealink firmware forces a change-password screen");
 		}
 		($this->set)($key, $value);
+	}
+
+	/**
+	 * Where phones were last found to reach /openprov (Web::resolve()):
+	 * {mode: freepbx|service|http|none, port, ok, message, upstream?, at}.
+	 * Internal state, not a setting.
+	 */
+	public function webState(): array
+	{
+		$v = ($this->get)('web_state');
+		$v = is_string($v) ? json_decode($v, true) : $v;
+		return is_array($v) ? $v : [];
+	}
+
+	public function setWebState(array $state): void
+	{
+		($this->set)('web_state', json_encode($state));
+	}
+
+	/** Port written into HTTPS phone URLs. */
+	public function phonePort(): int
+	{
+		$state = $this->webState();
+		if (!empty($state['port']) && in_array($state['mode'] ?? '', ['freepbx', 'service'], true)) {
+			return (int) $state['port'];
+		}
+		return (int) $this->get('https_port') ?: 443;
 	}
 
 	/** Fill generated secrets that are still empty. */

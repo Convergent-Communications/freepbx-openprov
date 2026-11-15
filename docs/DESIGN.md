@@ -30,12 +30,37 @@ what was chosen, why, and what was rejected.
 ## D3. A path on FreePBX's own web server, not a vhost or port of its own (revised 2026-11-15)
 
 - **Chosen:** phones reach OpenProv at `/openprov/` on the web server FreePBX
-  already runs, on its existing ports (443/80, or whatever System Admin Port
-  Management set). `<webroot>/openprov` is a symlink to the module's `htdocs/`;
+  already runs. `<webroot>/openprov` is a symlink to the module's `htdocs/`;
   its `.htaccess` (mod_rewrite only) sends every path to `htdocs/index.php`,
   which refuses requests that don't come through that path. Install creates
   the symlink as whichever user runs it. No root is needed, and nothing in
   `/etc/apache2` is written.
+- **HTTPS is detected, not assumed** (`Web::resolve()`, on install, Apply
+  Config, settings changes and `web --check`). With `https_mode = auto`:
+  1. **FreePBX's own HTTPS:** System Admin Port Management's `ssl*` ports, then
+     443. The first one where `/openprov/_ping` answers is written into phone
+     URLs.
+  2. **Otherwise OpenProv's HTTPS service:** `node/tls-service.js` under
+     FreePBX's pm2 module as `openprov-tls`, the way UCP and Sangoma Connect run
+     their Node services.
+     - It listens on `service_port` (default 8449; not 8443, which Sangoma
+       Connect uses).
+     - It uses Certificate Manager's default certificate, reloads it when the
+       files change (Let's Encrypt renewals), and restarts on a new default
+       certificate (certman hook).
+     - It forwards to `/openprov` on Apache's loopback HTTP port, with the
+       phone's IP and a shared secret that `index.php` trusts only from
+       loopback.
+     - It is started by `fwconsole start` (post-Asterisk hook).
+     - If the port is taken, it isn't started; the reason shows in the GUI and
+       `web --check`.
+     - Its port is registered with the Firewall module as a custom service.
+
+     It is a separate process, so a port conflict there can never affect
+     Apache, not even at boot.
+
+  The lab box (System Admin with no SSL ports) uses the service. `https_mode
+  = freepbx | service` forces one side, and `https_port` pins FreePBX's port.
 - **Hard rule:** OpenProv never writes Apache configuration, adds `Listen`
   directives, or reloads/restarts Apache for its own sake. A test
   (`web: no code writes Apache config…`) enforces it.
@@ -70,8 +95,9 @@ what was chosen, why, and what was rejected.
   to the phones beforehand.
 - **Rejected:**
   - *Own vhost and port (0.1.x)*: see the incident.
-  - *Own Node/pm2 service*: OpenProv is PHP that needs FreePBX in-process
-    (D1, D2). A second server would only re-implement auth and streaming.
+  - *Moving provisioning itself into Node*: OpenProv is PHP that needs
+    FreePBX in-process (D1, D2). The pm2 service only terminates TLS and
+    forwards to the same PHP, so there is one implementation.
 - **Upgrade:** see `UPGRADE-0.2.md`. Removing the 0.1 vhost is the only
   remaining Apache action. It runs as root from fwconsole only (module
   install/upgrade, `fwconsole reload`, `fwconsole openprov web --install`),
@@ -275,10 +301,11 @@ picks the host and port written into `auto_provision.server.url`.
   (for example 10.8.0.1). The phone keeps provisioning through the tunnel after
   first contact, and the provisioning port never has to face the internet.
   Tunnel-bound models are forced onto this network (D8a).
-- **Firewall:** phones use FreePBX's web port, which the FreePBX firewall
-  already models (Web Management). `tun0` is Internal, which allows it. 0.1.x
-  had its own custom service, "OpenProv provisioning" (8443); the 0.2 upgrade
-  removes it.
+- **Firewall:** on FreePBX's own HTTPS port, phones are covered by the
+  firewall's Web Management service (`tun0` is Internal, which allows it). With
+  OpenProv's HTTPS service, its port is the custom service "OpenProv
+  provisioning", in the zones from `firewall_zones`. 0.1.x's 8443 entry is
+  removed on upgrade.
 
 ## D10a. Server config wins over phone-side edits
 

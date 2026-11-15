@@ -10,7 +10,7 @@ declare(strict_types=1);
 
 namespace FreePBX\modules\Openprov\Tests;
 
-use FreePBX\modules\Openprov\{Assets, Catalog, ConfigBuilder, Notifier, Pbx, ProvisionServer, Service, Settings, Store, Tar, Util, Vpn, Web};
+use FreePBX\modules\Openprov\{Assets, Catalog, ConfigBuilder, Notifier, Pbx, ProvisionServer, Service, Settings, Store, Tar, TlsService, Util, Vpn, Web};
 use FreePBX\modules\Openprov\Brand\Yealink;
 use PDO;
 
@@ -219,7 +219,7 @@ function world(): object
 		$sent[] = [$ep, $event];
 		return ['ok' => true, 'message' => 'sent'];
 	});
-	$svc = new Service($store, $catalog, $pbx, $vpn, $assets, $settings, $builder, $notifier, new Web($settings, '/nonexistent-webroot', dirname(__DIR__) . '/htdocs', ['run' => fn($c) => [1, ''], 'root' => false, 'settle' => 0]));
+	$svc = new Service($store, $catalog, $pbx, $vpn, $assets, $settings, $builder, $notifier, new Web($settings, '/nonexistent-webroot', dirname(__DIR__) . '/htdocs', ['run' => fn($c) => [1, ''], 'root' => false, 'settle' => 0, 'probe' => fn($u) => false, 'firewall' => fn() => null]));
 	$server = new ProvisionServer($store, $catalog, $builder, $settings, $assets, $vpn);
 	return (object) compact('db', 'settings', 'store', 'catalog', 'pbx', 'vpn', 'assets', 'builder', 'svc', 'server', 'sent', 'dir');
 }
@@ -1043,8 +1043,8 @@ function webFixture(bool $root, array $rcs = []): object
 		return [0, ''];
 	};
 	$kv = [];
-	$settings = new Settings(fn($k) => $kv[$k] ?? null, function ($k, $v) use (&$kv) { $kv[$k] = $v; });
-	$web = new Web($settings, "$tmp/www", dirname(__DIR__) . '/htdocs', ['apache_dir' => "$tmp/apache", 'run' => $run, 'root' => $root, 'settle' => 0]);
+	$settings = new Settings(function ($k) use (&$kv) { return $kv[$k] ?? null; }, function ($k, $v) use (&$kv) { $kv[$k] = $v; });
+	$web = new Web($settings, "$tmp/www", dirname(__DIR__) . '/htdocs', ['apache_dir' => "$tmp/apache", 'run' => $run, 'root' => $root, 'settle' => 0, 'firewall' => fn() => null, 'probe' => fn($u) => false]);
 	return (object) compact('tmp', 'cmds', 'web', 'settings');
 }
 
@@ -1143,10 +1143,135 @@ $tests['server: plain HTTP is refused unless phone_scheme is http; URLs carry /o
 	$w->settings->set('phone_scheme', 'http');
 	eq('http://192.0.2.10/openprov', $w->builder->baseUrl('internal'), 'port 80 is implicit');
 	ok($w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', 'boot', 'bootpass', false)['status'] !== 403, 'HTTP allowed with http scheme');
-	throws(fn() => $w->settings->set('https_port', 0), 'TCP port');
-	$w->settings->set('firewall_zones', 'internal');
+	throws(fn() => $w->settings->set('http_port', 0), 'TCP port');
+	throws(fn() => $w->settings->set('service_port', 443), '1025');
+	throws(fn() => $w->settings->set('https_mode', 'apache'), 'auto, freepbx or service');
 	$w->settings->set('tls_cert', '/x');
-	ok(!array_key_exists('firewall_zones', $w->settings->all()), 'retired settings are ignored');
+	ok(!array_key_exists('tls_cert', $w->settings->all()), 'retired settings are ignored');
+};
+
+// ---- HTTPS: FreePBX's own, else OpenProv's service ------------------------------
+
+class FakePm2
+{
+	public array $calls = [];
+	public bool $online = false;
+	public function __construct(private ?string $statusFile = null, private bool $binds = true) {}
+	public function getStatus($n) { return $this->online ? ['pm2_env' => ['status' => 'online']] : false; }
+	public function start($n, $proc, $env = [], $force = false)
+	{
+		$this->calls[] = ['start', $n, $env];
+		$this->online = true;
+		// what node/tls-service.js reports once it tried to bind
+		file_put_contents($this->statusFile, json_encode($this->binds ? ['ok' => true, 'error' => ''] : ['ok' => false, 'error' => 'port 8449 is already in use by another process']));
+		return [];
+	}
+	public function delete($n) { $this->calls[] = ['delete', $n]; $this->online = false; }
+}
+
+class FakeFirewall
+{
+	public array $svc = [];
+	public array $zones = [];
+	public function getAllCustomServices() { return $this->svc; }
+	public function addCustomService($name, $proto, $port) { $this->svc['id1'] = ['name' => $name, 'custid' => 'id1', 'custfw' => ['port' => $port]]; }
+	public function editCustomService($id, $name, $proto, $port) { $this->svc[$id]['custfw']['port'] = $port; }
+	public function setCustomServiceZones($id, $z) { $this->zones[$id] = $z; }
+	public function deleteCustomService($id) { unset($this->svc[$id], $this->zones[$id]); }
+}
+
+/** $answers: URLs (scheme://127.0.0.1:port) whose /openprov/_ping answers. */
+function httpsFixture(array $answers, array $sysadmin = [], array $opts = []): object
+{
+	$dir = sys_get_temp_dir() . '/openprov-tls-' . bin2hex(random_bytes(4));
+	mkdir($dir);
+	file_put_contents("$dir/c.crt", 'cert');
+	file_put_contents("$dir/c.key", 'key');
+	$pm2 = array_key_exists('pm2', $opts) ? $opts['pm2'] : new FakePm2("$dir/tls-service.status.json", $opts['binds'] ?? true);
+	$inUse = $opts['inUse'] ?? [];
+	$tls = new TlsService($pm2, '/x/tls-service.js', $dir, fn() => ['cert' => "$dir/c.crt", 'key' => "$dir/c.key"],
+		fn($cmd) => [0, array_filter($inUse, fn($p) => str_contains($cmd, ":$p'")) ? "LISTEN 0 511 *:x" : ''], 0);
+	$kv = [];
+	$settings = new Settings(function ($k) use (&$kv) { return $kv[$k] ?? null; }, function ($k, $v) use (&$kv) { $kv[$k] = $v; });
+	$fw = new FakeFirewall();
+	$probed = new \ArrayObject();
+	$web = new Web($settings, $dir, dirname(__DIR__) . '/htdocs', [
+		'root' => false, 'settle' => 0, 'run' => fn($c) => [0, ''],
+		'sysadmin' => fn() => $sysadmin, 'service' => $tls, 'secret' => fn() => 's3cret', 'firewall' => fn() => $fw,
+		'probe' => function ($url) use ($answers, $probed) {
+			$probed[] = $url;
+			foreach ($answers as $a) {
+				if (str_starts_with($url, "$a/")) {
+					return true;
+				}
+			}
+			return false;
+		},
+	]);
+	return (object) compact('dir', 'pm2', 'tls', 'settings', 'web', 'fw', 'probed');
+}
+
+$tests['https: FreePBX\'s own HTTPS is used when it serves /openprov (System Admin port, then 443)'] = function () {
+	$f = httpsFixture(['https://127.0.0.1:1443', 'http://127.0.0.1:80'], ['acp' => '80', 'sslacp' => '1443', 'fail2ban_ban_time' => '86400']);
+	$s = $f->web->resolve();
+	eq(['freepbx', 1443, true], [$s['mode'], $s['port'], $s['ok']]);
+	eq(1443, $f->settings->phonePort());
+	eq([], $f->pm2->calls, 'no service');
+	eq('https://127.0.0.1:1443/openprov/_ping', $f->probed[0], 'System Admin\'s HTTPS port first');
+
+	$f = httpsFixture(['https://127.0.0.1:443']);
+	eq(['freepbx', 443], array_slice(array_values($f->web->resolve()), 0, 2));
+};
+
+$tests['https: no HTTPS on FreePBX (the lab) → OpenProv\'s service on service_port, firewall service added'] = function () {
+	$f = httpsFixture(['http://127.0.0.1:80', 'https://127.0.0.1:8449'], ['acp' => '80', 'ucp' => '81', 'hpro' => '84']);
+	$s = $f->web->resolve();
+	ok($s['ok'], $s['message']);
+	eq(['service', 8449, 80], [$s['mode'], $s['port'], $s['upstream']]);
+	eq(8449, $f->settings->phonePort());
+	eq('start', $f->pm2->calls[0][0]);
+	$cfg = json_decode(file_get_contents($f->tls->configFile()), true);
+	eq([8449, 80, 's3cret'], [$cfg['port'], $cfg['upstreamPort'], $cfg['secret']]);
+	eq('600', substr(sprintf('%o', fileperms($f->tls->configFile())), -3), 'secret file is private');
+	eq('8449', $f->fw->svc['id1']['custfw']['port']);
+	eq(['internal', 'other'], $f->fw->zones['id1']);
+	// Unchanged: not restarted.
+	$f->web->resolve();
+	eq(1, count($f->pm2->calls));
+	// FreePBX gains HTTPS later: the service and its firewall service go away.
+	$f2 = httpsFixture(['https://127.0.0.1:443']);
+	$f2->pm2->online = true;
+	$f2->fw->addCustomService('OpenProv provisioning', 'tcp', '8449');
+	eq('freepbx', $f2->web->resolve()['mode']);
+	eq([['delete', 'openprov-tls']], $f2->pm2->calls);
+	eq([], $f2->fw->svc);
+};
+
+$tests['https: a taken service port is reported and never fought over; Apache untouched'] = function () {
+	$f = httpsFixture(['http://127.0.0.1:80'], [], ['inUse' => [8449]]);
+	$s = $f->web->resolve();
+	ok(!$s['ok'] && str_contains($s['message'], 'Port 8449 is already in use'), $s['message']);
+	eq([], $f->pm2->calls, 'not started into a conflict');
+	// Taken after the check (race): the service reports it.
+	$f = httpsFixture(['http://127.0.0.1:80'], [], ['binds' => false]);
+	$s = $f->web->resolve();
+	ok(!$s['ok'] && str_contains($s['message'], 'already in use'), $s['message']);
+	// No pm2 module.
+	$f = httpsFixture(['http://127.0.0.1:80'], [], ['pm2' => null]);
+	ok(str_contains($f->web->resolve()['message'], 'pm2 module'));
+};
+
+$tests['https: freepbx mode without HTTPS says how to fix it; http scheme uses http_port'] = function () {
+	$f = httpsFixture(['http://127.0.0.1:80']);
+	$f->settings->set('https_mode', 'freepbx');
+	$s = $f->web->resolve();
+	ok(!$s['ok'] && str_contains($s['message'], 'Port Management'), $s['message']);
+	eq([], $f->pm2->calls);
+	$f->settings->set('phone_scheme', 'http');
+	eq(['http', 80, true], array_slice(array_values($f->web->resolve()), 0, 3));
+	$f = httpsFixture(['https://127.0.0.1:443', 'http://127.0.0.1:80', 'https://127.0.0.1:8449']);
+	$f->settings->set('https_mode', 'service');
+	eq('service', $f->web->resolve()['mode'], 'forced service even though 443 exists');
 };
 
 // ---- runner --------------------------------------------------------------------

@@ -12,6 +12,11 @@ $web = $info['web'];
 				Remove it: run <code><?= htmlspecialchars($web['command']) ?></code> as root on the PBX.
 			</div>
 		<?php endif; ?>
+		<?php if (!empty($web['https']) && empty($web['https']['ok'])): ?>
+			<div class="alert alert-danger">
+				Phones can't reach OpenProv over HTTPS: <?= htmlspecialchars((string) ($web['https']['message'] ?? '')) ?>
+			</div>
+		<?php endif; ?>
 		<?php if (!$web['published']): ?>
 			<div class="alert alert-warning">
 				Phones can't reach OpenProv: <code><?= htmlspecialchars($web['link']) ?></code> is missing.

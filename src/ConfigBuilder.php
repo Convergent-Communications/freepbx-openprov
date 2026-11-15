@@ -196,7 +196,7 @@ class ConfigBuilder
 	public function baseUrl(string $network, ?array $creds = null): string
 	{
 		$scheme = (string) $this->settings->get('phone_scheme');
-		$port = $scheme === 'https' ? (int) $this->settings->get('https_port') : (int) $this->settings->get('http_port');
+		$port = $scheme === 'https' ? $this->settings->phonePort() : (int) $this->settings->get('http_port');
 		$host = $this->hostFor($network);
 		if (str_contains($host, ':') && !str_starts_with($host, '[')) {
 			$host = '[' . $host . ']';

@@ -20,20 +20,20 @@ built to be driven by people (GUI) and by software (CLI and GraphQL).
 ```sh
 cd /var/www/html/admin/modules
 git clone https://github.com/Convergent-Communications/freepbx-openprov openprov
-fwconsole ma install openprov        # publishes https://<pbx>/openprov/ (no Apache changes)
+fwconsole ma install openprov        # publishes /openprov/ (no Apache changes); web --check shows the phone URL
 fwconsole openprov trust-key         # as root, once per system: no "unsigned module" warning
 ```
 
 - **Signed releases:** `main` and every release tag are signed with the OpenProv release key, fingerprint `E40F A5E8 A108 D1B8 2640 8E0D B63E 9EEE E8CD A76F`. FreePBX warns about modules that aren't signed by Sangoma. `trust-key` tells it to trust this key instead. Skip it and OpenProv still works, with the warning. See [module signing](docs/SIGNING.md) for what it changes and how to undo it.
-- **Where phones connect:** `/openprov/` on FreePBX's own web server, on its existing HTTPS port (443 unless System Admin Port Management moved it; then set `https_port`). OpenProv has no port, vhost or listener of its own and never changes Apache's configuration. The certificate is FreePBX's (Certificate Manager), so Let's Encrypt renewals apply automatically. Check it with `fwconsole openprov web --check`.
-- **FreePBX firewall:** phones need the FreePBX web service (Connectivity → Firewall → Services → Web Management) in the zone they arrive from. The VPN interface `tun0` is Internal, which allows it by default. Opening it to `external` also exposes the admin GUI and UCP; use the VPN for remote phones instead.
+- **Where phones connect:** `/openprov/` on FreePBX's own HTTPS port when it has one (System Admin Port Management or 443, detected). Otherwise OpenProv runs its own small HTTPS service under pm2 on port 8449 (`service_port`) that forwards to it. OpenProv never changes Apache's configuration. The certificate is Certificate Manager's default either way, so Let's Encrypt renewals apply automatically. `fwconsole openprov web --check` shows the URL phones use.
+- **FreePBX firewall:** on FreePBX's own HTTPS port, phones need the firewall's Web Management service in their zone. With OpenProv's service, its port is added as the custom service "OpenProv provisioning" in the `firewall_zones` setting (default internal and other; the VPN interface `tun0` is Internal). Use the VPN for remote phones rather than opening either to `external`.
 - **Upgrading from 0.1.x?** Read [docs/UPGRADE-0.2.md](docs/UPGRADE-0.2.md): the 8443 vhost is removed and phones must be pointed at the new URL.
 
 ## Bring a phone online
 
 1. **Add the phone.** In Connectivity → OpenProv Provisioning → Phones, click Add phone and enter the MAC, model, template and extension. Or use `fwconsole openprov device.save --data '{...}'`.
-2. **Point the phone at the bootstrap URL** and credential from the Settings tab (e.g. `https://pbx/openprov`):
-   - DHCP option 66: `https://user:pass@pbx/openprov`
+2. **Point the phone at the bootstrap URL** and credential from the Settings tab (e.g. `https://pbx/openprov`, or `https://pbx:8449/openprov` with OpenProv's HTTPS service):
+   - DHCP option 66: `https://user:pass@pbx/openprov` (same host and port as the bootstrap URL)
    - or Yealink RPS
    - or the phone's own Auto Provision page
 

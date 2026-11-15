@@ -2,7 +2,7 @@
 	<rawname>openprov</rawname>
 	<repo>unsupported</repo>
 	<name>OpenProv Phone Provisioning</name>
-	<version>0.2.0</version>
+	<version>0.2.1</version>
 	<publisher>Convergent</publisher>
 	<license>GPLv3+</license>
 	<licenselink>https://www.gnu.org/licenses/gpl-3.0.txt</licenselink>
@@ -10,6 +10,7 @@
 	<description>Open-source phone provisioning for FreePBX. Renders Yealink configs on demand over HTTPS with per-device credentials, maps users and feature codes onto line keys, pushes System Admin VPN profiles, wallpapers, ringtones and firmware, and re-syncs phones automatically when their configuration changes. Drivable from the GUI, fwconsole and GraphQL.</description>
 	<more-info>https://github.com/Convergent-Communications/freepbx-openprov</more-info>
 	<changelog>
+		*0.2.1* Fix HTTP 500 on every /openprov request. HTTPS is detected instead of assumed: FreePBX's own HTTPS port (System Admin Port Management or 443) when it has one, otherwise OpenProv's own HTTPS service under pm2 on port 8449 (Certificate Manager's certificate; a port conflict there never affects Apache).
 		*0.2.0* Phones are served at /openprov/ on FreePBX's own web server (443). OpenProv no longer writes Apache configuration, adds Listen ports or reloads Apache. Upgrading as root removes the 0.1 vhost on 8443 and its firewall service. Phones that already have a :8443 provisioning URL must be pointed at https://host/openprov (see docs/UPGRADE-0.2.md).
 		*0.1.0* Initial release.
 	</changelog>
@@ -24,6 +25,17 @@
 	<supported>
 		<version>17.0</version>
 	</supported>
+	<hooks>
+		<framework class="Start" namespace="FreePBX\Console\Command">
+			<method callingMethod="postAsteriskHooks" class="Openprov">startFreepbx</method>
+		</framework>
+		<framework class="Stop" namespace="FreePBX\Console\Command">
+			<method callingMethod="preAsteriskHooks" class="Openprov">stopFreepbx</method>
+		</framework>
+		<certman class="Certman" namespace="FreePBX\modules">
+			<method callingMethod="makeCertDefault" class="Openprov">setDefaultCert</method>
+		</certman>
+	</hooks>
 	<console>
 		<command>
 			<name>openprov</name>

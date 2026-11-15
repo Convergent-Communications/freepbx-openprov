@@ -51,6 +51,16 @@ $bootstrap_settings = [
 $restrict_mods = ['openprov' => true];
 include '/etc/freepbx.conf';
 
+try {
+	// Loads Openprov.class.php, which registers the autoloader for
+	// FreePBX\modules\Openprov\*: nothing below may use those classes before.
+	$openprov = \FreePBX::Openprov();
+} catch (\Throwable $e) {
+	error_log('OpenProv: ' . $e->getMessage());
+	http_response_code(500);
+	exit;
+}
+
 if ($path === \FreePBX\modules\Openprov\Web::PING) {
 	// Health check (fwconsole openprov web --check, Settings tab): proves
 	// Apache routes the path here and FreePBX bootstraps.
@@ -59,8 +69,22 @@ if ($path === \FreePBX\modules\Openprov\Web::PING) {
 	exit;
 }
 
+// Forwarded by OpenProv's HTTPS service (node/tls-service.js): it terminated
+// TLS and names the phone. Trusted only from loopback with the shared secret.
+$ip = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+$proxyHeader = (string) ($_SERVER['HTTP_X_OPENPROV_PROXY'] ?? '');
+if ($proxyHeader !== '' && in_array($ip, ['127.0.0.1', '::1'], true)) {
+	$fwd = trim((string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ''));
+	if (!hash_equals($openprov->proxySecret(), $proxyHeader) || filter_var($fwd, FILTER_VALIDATE_IP) === false) {
+		http_response_code(403);
+		exit;
+	}
+	$ip = $fwd;
+	$secure = true;
+}
+
 try {
-	$res = \FreePBX::Openprov()->provisionServer()->handle($path, (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), (string) ($_SERVER['REMOTE_ADDR'] ?? ''), $user, $pass, $secure);
+	$res = $openprov->provisionServer()->handle($path, (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), $ip, $user, $pass, $secure);
 } catch (\Throwable $e) {
 	error_log('OpenProv: ' . $e->getMessage());
 	$res = ['status' => 500, 'headers' => [], 'body' => "internal error\n"];

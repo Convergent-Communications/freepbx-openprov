@@ -8,7 +8,7 @@ namespace FreePBX\modules\Openprov;
  */
 class Service
 {
-	public const VERSION = '0.2.0';
+	public const VERSION = '0.2.1';
 	private bool $deferSync = false;
 
 	public function __construct(
@@ -56,11 +56,16 @@ class Service
 
 	public function setSettings(array $values): array
 	{
+		$webKeys = ['phone_scheme', 'https_mode', 'https_port', 'http_port', 'service_port', 'firewall_zones'];
+		$before = array_map(fn ($k) => $this->settings->get($k), $webKeys);
 		foreach ($values as $k => $v) {
 			if ($k === 'internal_host_effective' || $v === '********') {
 				continue;
 			}
 			$this->settings->set($k, $v);
+		}
+		if (array_map(fn ($k) => $this->settings->get($k), $webKeys) !== $before) {
+			$this->web->resolve(); // may move phones between FreePBX's HTTPS and OpenProv's service
 		}
 		$this->afterChange();
 		return $this->getSettings();
@@ -1681,9 +1686,10 @@ class Service
 		return $this->web->status();
 	}
 
-	/** Fetch /openprov/_ping through Apache, as a phone on the LAN would. */
+	/** Re-detect how phones reach /openprov, then fetch /openprov/_ping as a LAN phone would. */
 	public function webCheck(): array
 	{
+		$this->web->resolve();
 		return $this->web->check($this->settings->internalHost());
 	}
 

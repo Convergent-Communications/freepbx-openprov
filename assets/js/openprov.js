@@ -1031,8 +1031,11 @@
 		internal_host: 'Address phones on the LAN use (blank = auto-detected).',
 		external_host: 'Public hostname/IP for remote phones (template provisioning network "external").',
 		phone_scheme: 'https (recommended) or http (lab only). With https, plain-HTTP requests to /openprov/ are refused.',
-		https_port: 'FreePBX\'s HTTPS port (System Admin Port Management; default 443). Phones use /openprov/ on it. OpenProv has no port of its own. The certificate is FreePBX\'s (Certificate Manager).',
+		https_mode: 'auto: FreePBX\'s own HTTPS if it has one (System Admin Port Management or 443), else OpenProv\'s HTTPS service. freepbx / service: only that one.',
+		https_port: 'FreePBX\'s HTTPS port for /openprov/. 0 = detect (System Admin\'s HTTPS ports, then 443).',
+		service_port: 'Port of OpenProv\'s own HTTPS service (pm2), used when FreePBX\'s web server has no HTTPS. Runs as its own process, so a conflict on it never affects Apache. Certificate: Certificate Manager\'s default.',
 		http_port: 'FreePBX\'s HTTP port, used only with phone_scheme http.',
+		firewall_zones: 'FreePBX firewall zones OpenProv\'s HTTPS service port is opened in (custom service "OpenProv provisioning"). Not used when phones use FreePBX\'s own HTTPS (the firewall\'s Web Management service covers it). Comma-separated: trusted, internal, other, external.',
 		bootstrap_user: 'Shared first-contact credential (DHCP option 66 / RPS). Only works for phones that are added and not yet claimed.',
 		bootstrap_pass: '',
 		allowed_networks: 'CIDRs allowed to provision (blank = any). E.g. 192.168.0.0/16, 10.8.0.0/24',
@@ -1065,11 +1068,11 @@
 		main.innerHTML = `
 			<h4>Provisioning server</h4>
 			<p>Bootstrap URL: <code>${esc(info.bootstrap_url)}</code> · user <code>${esc(s.bootstrap_user)}</code> · password <code>${esc(s.bootstrap_pass)}</code></p>
-			<p class="small">Served at <code>${esc(w.path)}</code> on FreePBX's web server: ${w.published ? '<span class="text-success">published</span>' : `<span class="text-danger">not published</span> (run <code>${esc(w.command)}</code>)`}.
-			${w.legacy.present ? `<span class="text-danger">The old 0.1 vhost (port ${esc(w.legacy.ports.join(', '))}) is still installed: run <code>${esc(w.command)}</code> as root.</span>` : ''}
-			<button class="btn btn-default btn-sm" id="op-web-check">Test from the PBX</button> <span id="op-web-check-out"></span>
-			System Admin VPN server: ${info.vpn_server ? 'enabled' : 'off'}.
-			Phones reach it through the FreePBX firewall's web service (the zones that allow the FreePBX web ports).</p>
+			<p class="small">Phones: ${w.https && w.https.message ? `<span class="${w.https.ok ? 'text-success' : 'text-danger'}">${esc(w.https.message)}</span>` : '<span class="text-muted">not checked yet</span>'}
+			${w.published ? '' : `<br><span class="text-danger">${esc(w.path)} is not published: run <code>${esc(w.command)}</code>.</span>`}
+			${w.legacy.present ? `<br><span class="text-danger">The old 0.1 vhost (port ${esc(w.legacy.ports.join(', '))}) is still installed: run <code>${esc(w.command)}</code> as root.</span>` : ''}
+			<br><button class="btn btn-default btn-sm" id="op-web-check">Re-check</button> <span id="op-web-check-out"></span>
+			System Admin VPN server: ${info.vpn_server ? 'enabled' : 'off'}.</p>
 			<div class="form-row">${rows}</div>
 			<p class="small text-muted">What the Convergent dashboard may change is on the <a href="#" data-tab="dashboard">Dashboard</a> tab.</p>
 			<button class="btn btn-primary" id="op-gs-save">Save settings</button>

@@ -3,10 +3,12 @@ namespace FreePBX\modules\Openprov;
 
 /**
  * Where phones reach OpenProv (DESIGN.md D3): /openprov/ on the web server
- * FreePBX already runs, on the ports Apache already listens on (80/443, or
- * whatever System Admin Port Management set). <webroot>/openprov is a symlink
- * to the module's htdocs/ directory; htdocs/.htaccess routes every request to
- * htdocs/index.php.
+ * FreePBX already runs. <webroot>/openprov is a symlink to the module's
+ * htdocs/ directory; htdocs/.htaccess routes every request to
+ * htdocs/index.php. For HTTPS, resolve() picks FreePBX's own HTTPS port
+ * (System Admin Port Management, or Apache's 443) when it serves /openprov,
+ * and otherwise OpenProv's HTTPS service (TlsService, under pm2) on its own
+ * port, which forwards to /openprov over loopback HTTP.
  *
  * OpenProv never writes Apache configuration, adds Listen directives or
  * reloads Apache. 0.1.x did (its own vhost on 8443), and on 2026-11-15 that
@@ -30,10 +32,21 @@ class Web
 	private $run;
 	private bool $root;
 	private float $settle;
+	/** @var callable(): array<string,int|string> System Admin's sysadmin_options */
+	private $sysadmin;
+	/** @var callable(string): bool Does this URL answer PING_BODY? */
+	private $probe;
+	/** @var callable(): string */
+	private $secret;
+	private ?TlsService $service;
+	/** @var callable(): ?object FreePBX's Firewall BMO */
+	private $firewall;
 
 	/**
-	 * $opts (tests): apache_dir, run (fn(cmd) => [rc, output]), root (bool),
-	 * settle (seconds to wait after a reload before trusting is-active).
+	 * $opts: apache_dir, run (fn(cmd) => [rc, output]), root (bool), settle
+	 * (seconds to wait after a reload before trusting is-active), sysadmin,
+	 * probe, secret, service, firewall (see the properties). Defaults suit
+	 * tests; Openprov.class.php passes the real ones.
 	 */
 	public function __construct(private Settings $settings, private string $webRoot, private string $htdocs, array $opts = [])
 	{
@@ -45,6 +58,20 @@ class Web
 		};
 		$this->root = $opts['root'] ?? (function_exists('posix_geteuid') && posix_geteuid() === 0);
 		$this->settle = (float) ($opts['settle'] ?? 2.0);
+		$this->sysadmin = $opts['sysadmin'] ?? fn() => [];
+		$this->probe = $opts['probe'] ?? fn(string $url) => $this->fetch($url)['ok'];
+		$this->secret = $opts['secret'] ?? fn() => '';
+		$this->service = $opts['service'] ?? null;
+		$this->firewall = $opts['firewall'] ?? function () {
+			if (!class_exists('\FreePBX', false)) {
+				return null;
+			}
+			try {
+				return \FreePBX::Firewall();
+			} catch (\Throwable $e) {
+				return null;
+			}
+		};
 	}
 
 	// ---- the /openprov path -------------------------------------------------
@@ -113,26 +140,151 @@ class Web
 			'path' => self::PATH . '/',
 			'published' => $this->published(),
 			'link' => $this->link(),
+			'https' => $this->settings->webState(),
+			'service' => $this->service ? ['online' => $this->service->online(), 'reported' => $this->service->reported()] : null,
 			'legacy' => $this->legacy(),
 			'command' => self::COMMAND,
 		];
 	}
 
+	// ---- how phones reach /openprov over HTTPS --------------------------------
+
+	/** System Admin Port Management ports: [https candidates, http candidates]. */
+	private function sysadminPorts(): array
+	{
+		$ssl = $plain = [];
+		foreach ((array) ($this->sysadmin)() as $k => $v) {
+			$v = (int) $v;
+			if ($v < 1 || $v > 65535 || !preg_match('/^(ssl)?(acp|ucp|hpro|restapi|restapps|xml)$/', (string) $k, $m)) {
+				continue;
+			}
+			if ($m[1] === 'ssl') {
+				$ssl[$m[2]] = $v;
+			} else {
+				$plain[$m[2]] = $v;
+			}
+		}
+		// Prefer System Admin's provisioning port, then the admin GUI's.
+		$order = fn(array $a) => array_values(array_unique(array_merge(
+			array_values(array_intersect_key($a, ['hpro' => 1])),
+			array_values(array_intersect_key($a, ['acp' => 1])),
+			array_values($a)
+		)));
+		return [$order($ssl), $order($plain)];
+	}
+
+	private function ping(string $scheme, int $port): bool
+	{
+		return ($this->probe)("$scheme://127.0.0.1:$port" . self::PATH . self::PING);
+	}
+
 	/**
-	 * Fetch PATH/_ping through Apache the way a phone would (same scheme and
-	 * port as the phone URLs, certificate not verified: this checks routing,
-	 * not trust). Returns {ok, url, status, message}.
+	 * Work out where phones reach /openprov, start or stop OpenProv's HTTPS
+	 * service to match, and store the result (Settings::webState(), which
+	 * phone URLs use). Called on install, Apply Config, settings changes,
+	 * fwconsole openprov web --install/--check and the GUI's Test button.
 	 */
+	public function resolve(): array
+	{
+		$state = $this->decide();
+		$state['at'] = time();
+		$this->settings->setWebState($state);
+		return $state;
+	}
+
+	private function decide(): array
+	{
+		$mode = (string) $this->settings->get('https_mode');
+		[$ssl, $plain] = $this->sysadminPorts();
+		$http = array_values(array_unique(array_merge($plain, [80, (int) $this->settings->get('http_port')])));
+
+		if ($this->settings->get('phone_scheme') === 'http') {
+			$this->stopService();
+			$port = (int) $this->settings->get('http_port');
+			$ok = $this->ping('http', $port);
+			return ['mode' => 'http', 'port' => $port, 'ok' => $ok, 'message' => $ok ? "Plain HTTP on FreePBX's web server, port $port (lab only)" : "Nothing answers /openprov over HTTP on port $port (http_port)"];
+		}
+
+		if ($mode !== 'service') {
+			$explicit = (int) $this->settings->get('https_port');
+			foreach ($explicit > 0 ? [$explicit] : array_values(array_unique(array_merge($ssl, [443]))) as $port) {
+				if ($this->ping('https', $port)) {
+					$this->stopService();
+					return ['mode' => 'freepbx', 'port' => $port, 'ok' => true, 'message' => "FreePBX's web server, HTTPS port $port"];
+				}
+			}
+			if ($mode === 'freepbx' || $explicit > 0) {
+				$this->stopService();
+				$port = $explicit ?: 443;
+				return ['mode' => 'freepbx', 'port' => $port, 'ok' => false, 'message' => "FreePBX's web server doesn't serve /openprov over HTTPS on port $port. Enable HTTPS in System Admin → Port Management (then set https_port, or 0 to detect), or set https_mode to auto or service."];
+			}
+		}
+
+		// No HTTPS on FreePBX's web server: OpenProv's own HTTPS service.
+		$port = (int) $this->settings->get('service_port');
+		$upstream = null;
+		foreach ($http as $p) {
+			if ($p > 0 && $this->ping('http', $p)) {
+				$upstream = $p;
+				break;
+			}
+		}
+		if ($upstream === null) {
+			return ['mode' => 'service', 'port' => $port, 'ok' => false, 'message' => 'OpenProv\'s HTTPS service forwards to /openprov on FreePBX\'s HTTP port, but none answered (tried ' . implode(', ', array_filter($http)) . '). Run ' . self::COMMAND . ', and check fwconsole openprov web --check.'];
+		}
+		if (!$this->service) {
+			return ['mode' => 'service', 'port' => $port, 'ok' => false, 'message' => 'OpenProv\'s HTTPS service is not available'];
+		}
+		[$ok, $msg] = $this->service->ensure($port, $upstream, ($this->secret)());
+		$fw = '';
+		try {
+			$fw = (string) $this->ensureFirewallService($port);
+		} catch (\Throwable $e) {
+			$fw = 'Firewall: could not add the service (' . $e->getMessage() . ')';
+		}
+		if ($ok && !$this->ping('https', $port)) {
+			$ok = false;
+			$msg = "OpenProv's HTTPS service is up on port $port but /openprov doesn't answer through it";
+		}
+		return ['mode' => 'service', 'port' => $port, 'upstream' => $upstream, 'ok' => $ok, 'message' => rtrim($msg, '.') . ($fw !== '' ? ". $fw" : '')];
+	}
+
+	private function stopService(): void
+	{
+		$this->service?->stop();
+		try {
+			$this->removeFirewallService();
+		} catch (\Throwable $e) {
+		}
+	}
+
+	/** Phone-side view of the current state: fetch /openprov/_ping on the LAN address. */
 	public function check(string $host): array
 	{
-		$scheme = (string) $this->settings->get('phone_scheme');
-		$port = (int) $this->settings->get($scheme === 'https' ? 'https_port' : 'http_port');
+		$state = $this->settings->webState();
+		$scheme = ($state['mode'] ?? '') === 'http' ? 'http' : 'https';
+		$port = (int) ($state['port'] ?? 0) ?: ($scheme === 'https' ? 443 : 80);
 		if (str_contains($host, ':') && !str_starts_with($host, '[')) {
 			$host = "[$host]";
 		}
 		$url = "$scheme://$host:$port" . self::PATH . self::PING;
+		$r = $this->fetch($url);
+		$where = ($state['mode'] ?? '') === 'service' ? "OpenProv's HTTPS service" : "FreePBX's web server";
+		$msg = match (true) {
+			!$r['ok'] && isset($state['ok']) && !$state['ok'] => (string) $state['message'],
+			$r['ok'] => "Phones reach OpenProv at $scheme://$host" . ($port === ($scheme === 'https' ? 443 : 80) ? '' : ":$port") . self::PATH . " ($where)",
+			$r['body'] === false => "No answer from $url ({$r['error']})",
+			$r['status'] === 404 => "HTTP 404 from $url: " . self::PATH . ' is not published, or Apache ignores htdocs/.htaccess (FreePBX needs AllowOverride All on its web root, and mod_rewrite)',
+			default => "HTTP {$r['status']} from $url",
+		};
+		return ['ok' => $r['ok'], 'url' => $url, 'status' => $r['status'], 'message' => $msg, 'https' => $state];
+	}
+
+	/** GET a URL without verifying the certificate (routing, not trust). */
+	private function fetch(string $url): array
+	{
 		if (!function_exists('curl_init')) {
-			return ['ok' => false, 'url' => $url, 'status' => 0, 'message' => 'php-curl is not available'];
+			return ['ok' => false, 'status' => 0, 'body' => false, 'error' => 'php-curl is not available'];
 		}
 		$ch = curl_init($url);
 		curl_setopt_array($ch, [
@@ -147,14 +299,41 @@ class Web
 		$code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
 		$err = curl_error($ch);
 		curl_close($ch);
-		$ok = $code === 200 && $body === self::PING_BODY;
-		$msg = match (true) {
-			$ok => 'Apache serves OpenProv at ' . self::PATH . '/',
-			$body === false => "No answer ($err). Is $port the port FreePBX's web server uses for $scheme? Set {$scheme}_port to match System Admin Port Management.",
-			$code === 404 => 'HTTP 404: ' . self::PATH . ' is not published, or Apache ignores htdocs/.htaccess (FreePBX needs AllowOverride All on its web root, and mod_rewrite)',
-			default => "HTTP $code from $url",
-		};
-		return ['ok' => $ok, 'url' => $url, 'status' => $code, 'message' => $msg];
+		return ['ok' => $code === 200 && $body === self::PING_BODY, 'status' => $code, 'body' => $body, 'error' => $err];
+	}
+
+	/** Open OpenProv's HTTPS service port in the zones from firewall_zones. */
+	public function ensureFirewallService(int $port): ?string
+	{
+		$fw = ($this->firewall)();
+		if (!$fw) {
+			return null;
+		}
+		$zones = array_values(array_intersect(
+			array_filter(array_map('trim', explode(',', (string) $this->settings->get('firewall_zones')))),
+			['trusted', 'internal', 'other', 'external']
+		));
+		$id = $this->firewallServiceId($fw);
+		if ($id === null) {
+			$fw->addCustomService(self::FIREWALL_SERVICE, 'tcp', (string) $port);
+			$id = $this->firewallServiceId($fw);
+		} else {
+			$fw->editCustomService($id, self::FIREWALL_SERVICE, 'tcp', (string) $port);
+		}
+		if ($id !== null) {
+			$fw->setCustomServiceZones($id, $zones);
+		}
+		return "Firewall: TCP $port open for zones " . (implode(', ', $zones) ?: 'none');
+	}
+
+	private function firewallServiceId(object $fw): mixed
+	{
+		foreach ((array) $fw->getAllCustomServices() as $cid => $svc) {
+			if (is_array($svc) && ($svc['name'] ?? '') === self::FIREWALL_SERVICE) {
+				return $svc['custid'] ?? $cid;
+			}
+		}
+		return null;
 	}
 
 	// ---- the 0.1.x vhost ----------------------------------------------------
@@ -204,7 +383,8 @@ class Web
 			[$ok, $m] = $this->reloadApache();
 			$msgs[] = $m;
 		} else {
-			$ok = true;
+			// Nothing of 0.1's left; resolve() owns the firewall service now.
+			return [true, ''];
 		}
 		try {
 			$fw = $this->removeFirewallService();
@@ -265,43 +445,22 @@ class Web
 	}
 
 	/**
-	 * 0.1.x opened its port with a FreePBX firewall custom service. Phones now
-	 * use FreePBX's own web ports, which the firewall already covers (its
-	 * Web Management service), so the custom service only leaves 8443 open.
+	 * Drop the "OpenProv provisioning" firewall custom service: 0.1.x's 8443,
+	 * or the HTTPS service's port once FreePBX's own HTTPS is used (whose
+	 * ports the firewall's Web Management service already covers).
 	 */
 	public function removeFirewallService(): ?string
 	{
-		if (!class_exists('\FreePBX', false)) {
+		$fw = ($this->firewall)();
+		if (!$fw) {
 			return null;
 		}
-		try {
-			$fw = \FreePBX::Firewall();
-		} catch (\Throwable $e) {
-			return null;
-		}
-		$id = null;
-		foreach ((array) $fw->getAllCustomServices() as $cid => $svc) {
-			if (is_array($svc) && ($svc['name'] ?? '') === self::FIREWALL_SERVICE) {
-				$id = $svc['custid'] ?? $cid;
-			}
-		}
+		$id = $this->firewallServiceId($fw);
 		if ($id === null) {
 			return null;
 		}
-		// Closing it in every zone is the documented API; delete it too where
-		// this firewall version has a method for that.
 		$fw->setCustomServiceZones($id, []);
-		foreach (['deleteCustomService', 'removeCustomService', 'delCustomService'] as $m) {
-			if (method_exists($fw, $m)) {
-				$fw->$m($id);
-				break;
-			}
-		}
-		$restarted = '';
-		if ($this->root && method_exists($fw, 'isEnabled') && $fw->isEnabled()) {
-			[$rc] = ($this->run)('fwconsole firewall restart');
-			$restarted = $rc === 0 ? ' (firewall restarted)' : ' (firewall restart failed; run fwconsole firewall restart)';
-		}
-		return 'Firewall: removed the "' . self::FIREWALL_SERVICE . '" service' . $restarted;
+		$fw->deleteCustomService($id);
+		return 'Firewall: removed the "' . self::FIREWALL_SERVICE . '" service';
 	}
 }

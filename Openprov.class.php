@@ -58,8 +58,65 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 		$vpn = new Vpn($this->db);
 		$assets = new Assets($store, $this->assetDir());
 		$builder = new ConfigBuilder($store, $catalog, $pbx, $vpn, $assets, $settings, ['yealink' => new Yealink()]);
-		$web = new Web($settings, $this->webRoot(), __DIR__ . '/htdocs');
-		return $this->parts = compact('settings', 'store', 'catalog', 'pbx', 'vpn', 'assets', 'builder', 'web');
+		$tls = new \FreePBX\modules\Openprov\TlsService($this->bmo('Pm2'), __DIR__ . '/node/tls-service.js', $this->assetDir() . '/tls', fn() => $this->certificate());
+		$web = new Web($settings, $this->webRoot(), __DIR__ . '/htdocs', [
+			'service' => $tls,
+			'secret' => fn() => $this->proxySecret(),
+			'sysadmin' => fn() => $this->sysadminOptions(),
+		]);
+		return $this->parts = compact('settings', 'store', 'catalog', 'pbx', 'vpn', 'assets', 'builder', 'web', 'tls');
+	}
+
+	/** Another module's BMO object, or null when it isn't installed/enabled. */
+	private function bmo(string $name): ?object
+	{
+		try {
+			$m = $this->FreePBX->Modules->getInfo(strtolower($name));
+			if (($m[strtolower($name)]['status'] ?? null) !== MODULE_STATUS_ENABLED) {
+				return null;
+			}
+			return $this->FreePBX->$name;
+		} catch (\Throwable $e) {
+			return null;
+		}
+	}
+
+	/** System Admin Port Management (sysadmin_options), [] without System Admin. */
+	private function sysadminOptions(): array
+	{
+		try {
+			return (array) $this->db->query("SELECT `key`, `value` FROM sysadmin_options")->fetchAll(\PDO::FETCH_KEY_PAIR);
+		} catch (\Throwable $e) {
+			return [];
+		}
+	}
+
+	/** Certificate Manager's default certificate: {cert, key, ca?}. */
+	private function certificate(): array
+	{
+		$files = [];
+		$certman = $this->bmo('Certman');
+		if ($certman) {
+			$files = (array) ($certman->getDefaultCertDetails()['files'] ?? []);
+		}
+		$cert = $files['fullchain'] ?? $files['crt'] ?? '/etc/asterisk/keys/default.crt';
+		$key = $files['key'] ?? '/etc/asterisk/keys/default.key';
+		return ['cert' => $cert, 'key' => $key];
+	}
+
+	/**
+	 * Shared by OpenProv's HTTPS service and htdocs/index.php: requests that
+	 * carry it from loopback come from the service (phone IP in
+	 * X-Forwarded-For, TLS terminated there).
+	 */
+	public function proxySecret(): string
+	{
+		$s = (string) $this->getConfig('tls_service_secret');
+		if (strlen($s) < 32) {
+			$s = bin2hex(random_bytes(24));
+			$this->setConfig('tls_service_secret', $s);
+		}
+		return $s;
 	}
 
 	public function webRoot(): string
@@ -150,7 +207,7 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 			return;
 		}
 		$old = [];
-		foreach (['https_port', 'http_port', 'tls_cert', 'tls_key', 'tls_chain', 'firewall_zones'] as $k) {
+		foreach (['https_port', 'http_port', 'tls_cert', 'tls_key', 'tls_chain'] as $k) {
 			$v = $this->getConfig($k);
 			if ($v !== null && $v !== false && $v !== '') {
 				$old[] = "$k=$v";
@@ -158,8 +215,7 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 			}
 		}
 		if ($old) {
-			out('OpenProv: phones now use /openprov/ on FreePBX\'s web ports (HTTPS 443). Cleared the 0.1 vhost settings: ' . implode(', ', $old)
-				. '. If FreePBX\'s HTTPS is on another port (System Admin Port Management), set it: fwconsole openprov settings.set https_port=N');
+			out('OpenProv: phones now use /openprov/ on FreePBX\'s HTTPS port (detected), or OpenProv\'s own HTTPS service when FreePBX has none. Cleared the 0.1 vhost settings: ' . implode(', ', $old));
 		}
 		$this->setConfig('web_layout', 'path');
 	}
@@ -176,7 +232,8 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 		[$ok, $msg] = $web->publish();
 		[$ok2, $msg2] = $web->removeLegacy(); // also drops the 0.1 firewall service
 		$this->legacyNotice($web->legacy()['present']);
-		return [$ok && $ok2, trim($msg . "\n" . $msg2)];
+		$state = $web->resolve();
+		return [$ok && $ok2 && $state['ok'], trim($msg . "\n" . $msg2 . "\nHTTPS: " . $state['message'])];
 	}
 
 	private function legacyNotice(bool $show): void
@@ -201,6 +258,11 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 		} catch (\Throwable $e) {
 		}
 		$web = $this->parts()['web'];
+		$this->parts()['tls']->stop();
+		try {
+			$web->removeFirewallService();
+		} catch (\Throwable $e) {
+		}
 		$web->unpublish();
 		if ($web->legacy()['present']) {
 			[, $msg] = $web->removeLegacy();
@@ -221,6 +283,8 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 		try {
 			if (function_exists('posix_geteuid') && posix_geteuid() === 0 && $this->parts()['web']->legacy()['present']) {
 				$this->webInstall();
+			} else {
+				$this->parts()['web']->resolve();
 			}
 		} catch (\Throwable $e) {
 		}
@@ -237,6 +301,47 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 			// Never break a reload.
 		}
 		return [];
+	}
+
+	/**
+	 * fwconsole start (boot): start OpenProv's HTTPS service if that's how
+	 * phones reach it. Uses the stored decision rather than re-detecting, in
+	 * case Apache isn't up yet.
+	 */
+	public function startFreepbx($output = null)
+	{
+		try {
+			$p = $this->parts();
+			$state = $p['settings']->webState();
+			if (($state['mode'] ?? '') === 'service' && !empty($state['upstream'])) {
+				[$ok, $msg] = $p['tls']->ensure((int) $state['port'], (int) $state['upstream'], $this->proxySecret());
+				if (is_object($output)) {
+					$output->writeln(($ok ? '' : '<error>') . 'OpenProv: ' . $msg . ($ok ? '' : '</error>'));
+				}
+			}
+		} catch (\Throwable $e) {
+		}
+	}
+
+	public function stopFreepbx($output = null)
+	{
+		try {
+			$this->parts()['tls']->stop();
+		} catch (\Throwable $e) {
+		}
+	}
+
+	/** Certificate Manager made another certificate the default: use it. */
+	public function setDefaultCert($details = null)
+	{
+		try {
+			$p = $this->parts();
+			$state = $p['settings']->webState();
+			if (($state['mode'] ?? '') === 'service' && !empty($state['upstream'])) {
+				$p['tls']->ensure((int) $state['port'], (int) $state['upstream'], $this->proxySecret(), true);
+			}
+		} catch (\Throwable $e) {
+		}
 	}
 
 	public function writeConfig($conf)

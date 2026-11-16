@@ -8,7 +8,7 @@ namespace FreePBX\modules\Openprov;
  */
 class Service
 {
-	public const VERSION = '0.2.2';
+	public const VERSION = '0.2.3';
 	private bool $deferSync = false;
 
 	public function __construct(

@@ -5,6 +5,7 @@ Sign this FreePBX module with the release key, and check signatures.
   bin/module-sign sign          sign the committed tree, commit module.sig
   bin/module-sign check [REV]   verify module.sig at REV (default HEAD)
   bin/module-sign release       sign, tag v<version>, build dist/<rawname>-<version>.tgz
+                                and dist/update.json (for module.xml's <updateurl>)
 
 module.sig is what FreePBX checks (admin/libraries/BMO/GPG.class.php): a
 clearsigned INI file with the sha256 of every file in the module. FreePBX
@@ -20,6 +21,7 @@ The same script is used in every module signed with this key; keep the
 copies identical.
 """
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -185,8 +187,34 @@ def cmd_release():
     out = f"dist/{rawname}-{version}.tgz"
     git("archive", "--format=tar.gz", f"--prefix={rawname}/", "-o", out, tag)
     print(f"Tagged {tag} and built {out}.")
-    print(f"Publish: git push && git push origin {tag}, then attach {out} to the release.")
+    assets = out
+    update = update_json(rawname, version, tag)
+    if update:
+        assets += f" {update}"
+        print(f"Built {update} (what fwconsole ma upgrade {rawname} reads via <updateurl>).")
+    print(f"Publish: git push && git push origin {tag}, then: gh release create {tag} {assets}")
     return 0
+
+
+def update_json(rawname, version, tag):
+    """dist/update.json for FreePBX's <updateurl>: {"version", "location"}.
+
+    <updateurl> points at .../releases/latest/download/update.json, so the
+    newest (non-prerelease) GitHub release that carries this file is the
+    one FreePBX offers; "location" is that release's tarball.
+    """
+    xml = git("show", f"{tag}:module.xml")
+    m = re.search(r"<updateurl>\s*(https://[^<\s]+)/releases/latest/download/update\.json\s*</updateurl>", xml)
+    if not m:
+        return None
+    out = "dist/update.json"
+    with open(out, "w") as f:
+        f.write(json.dumps({
+            "rawname": rawname,
+            "version": version,
+            "location": f"{m.group(1)}/releases/download/{tag}/{rawname}-{version}.tgz",
+        }, indent=2) + "\n")
+    return out
 
 
 def main(argv):

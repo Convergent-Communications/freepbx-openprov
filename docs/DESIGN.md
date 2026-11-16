@@ -357,6 +357,13 @@ A device has a *provisioning network*: `auto` (the default), `internal`,
   hairpinning), or their template set to `internal`. It also lets the PBX use a
   publicly trusted certificate for that name, which models like the T57W
   require.
+  - *VPN phones on `auto`* register SIP through the tunnel (`vpn_provisioning_host`,
+    or the tunnel address) while still provisioning from the DNS name. Moving
+    DNS still moves them: the new PBX hands out its own VPN profile, whose
+    tunnel address is the new PBX. SIP over the tunnel is the point of giving a
+    phone a VPN. Explicit `internal`/`external` keeps SIP on that network. A
+    phone whose VPN is held (rebuild) or whose profile can't be built uses
+    the direct address.
 
 - **`vpn`** uses `vpn_provisioning_host`, or the VPN server's tunnel address
   (for example 10.8.0.1). The phone keeps provisioning through the tunnel after

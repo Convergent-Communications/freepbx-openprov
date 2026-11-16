@@ -309,13 +309,29 @@ class ConfigBuilder
 		$fileNetwork = ($network === 'vpn' && !$onTunnel) ? $directNetwork : $network;
 		$creds = ['user' => $device['prov_user'], 'pass' => $device['prov_pass']];
 
-		$sipHost = trim((string) ($s['sip_server'] ?? '')) ?: $this->hostFor($network);
+		// The phone should have a VPN profile but it can't be built right now
+		// (System Admin's client list or the client's files unreadable, e.g.
+		// mid-rebuild): sync must not push this render (Service::syncChanged).
+		$vpnUnavailable = null;
+		if ($vpnClient !== null && !isset($this->vpn->clients()[$vpnClient])) {
+			$vpnUnavailable = "VPN client $vpnClient is not in System Admin's client list";
+		} elseif ($vpnClient !== null && $this->vpn->profileVersion($vpnClient) === null) {
+			$vpnUnavailable = "VPN client $vpnClient's certificate files are not readable";
+		}
+		// SIP: on "auto", a phone with a working VPN registers through its
+		// tunnel; provisioning still follows external_host (DNS), so a DNS
+		// change still moves the phone, and the new PBX gives it a new VPN.
+		// An explicit internal/external choice keeps SIP on that network.
+		$autoNetwork = !in_array((string) ($s['prov_network'] ?? 'auto'), ['internal', 'external', 'vpn'], true);
+		$sipNetwork = ($autoNetwork && $vpnClient !== null && $vpnUnavailable === null && $this->vpn->serverTunnelAddress() !== null)
+			? 'vpn' : $network;
+		$sipHost = trim((string) ($s['sip_server'] ?? '')) ?: $this->hostFor($sipNetwork);
 		// Port: the template/phone's sip_port, else the PBX's PJSIP transport
 		// for the extension (its own transport, else the one matching
 		// sip_transport: 0 UDP, 1 TCP, 2 TLS).
 		$fixedPort = trim((string) ($s['sip_port'] ?? ''));
 		$proto = ['1' => 'tcp', '2' => 'tls'][(string) ($s['sip_transport'] ?? '0')] ?? 'udp';
-		$portFor = fn(string $transport = '') => $fixedPort !== '' ? $fixedPort : (string) $this->pbx->pjsipPort($proto, $transport, $network === 'external');
+		$portFor = fn(string $transport = '') => $fixedPort !== '' ? $fixedPort : (string) $this->pbx->pjsipPort($proto, $transport, $sipNetwork === 'external');
 		$sipPort = $portFor();
 		$accountFormat = (string) ($s['account_label_format'] ?? '{ext}');
 
@@ -446,15 +462,6 @@ class ConfigBuilder
 			&& self::firmwareFits($a, (string) $device['model'])) {
 			$urls['firmware'] = "$assetBase/a/firmware/{$a['id']}/" . rawurlencode($a['name']);
 		}
-		// The phone should have a VPN profile but it can't be built right now
-		// (System Admin's client list or the client's files unreadable, e.g.
-		// mid-rebuild): sync must not push this render (Service::syncChanged).
-		$vpnUnavailable = null;
-		if ($vpnClient !== null && !isset($this->vpn->clients()[$vpnClient])) {
-			$vpnUnavailable = "VPN client $vpnClient is not in System Admin's client list";
-		} elseif ($vpnClient !== null && $this->vpn->profileVersion($vpnClient) === null) {
-			$vpnUnavailable = "VPN client $vpnClient's certificate files are not readable";
-		}
 		if ($vpnClient !== null) {
 			// ?v= changes with the certificates/server (Vpn::profileVersion), so a
 			// VPN rebuild changes this config and the phone fetches the new profile.
@@ -478,6 +485,7 @@ class ConfigBuilder
 			'model' => $model,
 			'settings' => $s,
 			'network' => $network,
+			'sip_network' => $sipNetwork,
 			'on_tunnel' => $onTunnel,
 			'tunnel_bound' => $tunnelBound,
 			'accounts' => $accounts,

@@ -2,7 +2,7 @@
 	<rawname>openprov</rawname>
 	<repo>unsupported</repo>
 	<name>OpenProv Phone Provisioning</name>
-	<version>0.2.3</version>
+	<version>0.2.4</version>
 	<publisher>Convergent</publisher>
 	<license>GPLv3+</license>
 	<licenselink>https://www.gnu.org/licenses/gpl-3.0.txt</licenselink>
@@ -11,6 +11,7 @@
 	<more-info>https://github.com/Convergent-Communications/freepbx-openprov</more-info>
 	<updateurl>https://github.com/Convergent-Communications/freepbx-openprov/releases/latest/download/update.json</updateurl>
 	<changelog>
+		*0.2.4* Provisioning network Automatic: phones with a VPN register SIP through the tunnel (0.2.2 and 0.2.3 registered them to external_host); provisioning still follows the DNS name, so a DNS change still moves them.
 		*0.2.3* Updates: module.xml has an updateurl, so fwconsole ma upgrade openprov (and FreePBX's module updates) fetch the latest GitHub release. Install 0.2.3 once by URL; later versions come by upgrade.
 		*0.2.2* SIP port: read from FreePBX 17's PJSIP transports (Sipsettings), so a non-standard port such as 5160 reaches phones; it was always 5060. VPN: the profile URL changes when System Admin's certificates do, so a VPN rebuild is pushed to phones; updates are held while a profile can't be built; client certificate, CA and CRL expiry are tracked (phone page, vpn.expiring, FreePBX notification at CERT_DAYS_EXPIRATION_ALERT). Full VPN rebuilds: "Prepare for VPN rebuild" holds VPN phones off the VPN (so tunnel-bound phones aren't cut off and none trips fail2ban) and gives it back when the new CA appears; phones to repoint or unban are named in a notification. Provisioning network "auto" (new default): phones use external_host, so a DNS change moves them to another PBX. Firmware is only sent to the models it is for. The menu entry is now "OpenProv".
 		*0.2.1* Fix HTTP 500 on every /openprov request. HTTPS is detected instead of assumed: FreePBX's own HTTPS port (System Admin Port Management or 443) when it has one, otherwise OpenProv's own HTTPS service under pm2 on port 8449 (Certificate Manager's certificate; a port conflict there never affects Apache).

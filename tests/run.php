@@ -1318,7 +1318,7 @@ $tests['render: firmware goes only to the models it is for'] = function () {
 	eq(false, ConfigBuilder::firmwareFits(['name' => 'firmware.rom', 'model' => 'T87W'], 'T57W'), 'the asset model wins');
 };
 
-$tests['render: phones follow the public DNS name by default (auto), tunnel-bound VPN phones keep the tunnel'] = function () {
+$tests['render: phones follow the public DNS name by default (auto); VPN phones register through the tunnel'] = function () {
 	$w = world();
 	phone($w); // template "Base": prov_network not set = auto
 	$cfg = fn($mac = MAC) => kv($w->builder->render($w->store->deviceByMac($mac))['text']);
@@ -1331,6 +1331,16 @@ $tests['render: phones follow the public DNS name by default (auto), tunnel-boun
 	eq('https://192.0.2.10/openprov', $cfg()['static.auto_provision.server.url'], 'an explicit internal still wins');
 	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['prov_network' => '', 'vpn' => 'auto']]);
 	ok(str_contains($cfg()['static.auto_provision.server.url'], '10.8.0.1'), 'tunnel-bound T87W with VPN: the tunnel');
+	// A T57W (not tunnel-bound) with a VPN: provisions from the DNS name, registers through the tunnel.
+	$t57 = '805ec0a1b2c4';
+	$w->svc->saveDevice(['mac' => $t57, 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '212']], 'settings' => ['vpn' => 'auto']]);
+	eq('https://pbx.example.com/openprov', $cfg($t57)['static.auto_provision.server.url'], 'VPN phone: still provisions from the DNS name');
+	eq('10.8.0.1', $cfg($t57)['account.1.sip_server.1.address'], 'VPN phone: SIP through the tunnel');
+	eq('1', $cfg($t57)['static.network.vpn_enable']);
+	$w->svc->saveDevice(['mac' => $t57, 'settings' => ['prov_network' => 'external', 'vpn' => 'auto']]);
+	eq('pbx.example.com', $cfg($t57)['account.1.sip_server.1.address'], 'explicit external: SIP stays on the DNS name');
+	$w->svc->saveDevice(['mac' => $t57, 'settings' => ['prov_network' => '', 'vpn' => 'off']]);
+	eq('pbx.example.com', $cfg($t57)['account.1.sip_server.1.address'], 'no VPN: SIP on the DNS name');
 	eq('auto', json_decode(file_get_contents(dirname(__DIR__) . '/seeds/default-template.json'), true)['settings']['prov_network'], 'new installs default to auto');
 };
 

@@ -657,6 +657,14 @@
 			</div>` : ''}
 			${d.render_error ? `<div class="alert alert-danger">${esc(d.render_error)}</div>` : ''}
 			${(d.warnings || []).length ? `<div class="alert alert-warning">${d.warnings.map(esc).join('<br>')}</div>` : ''}
+			${id && d.effective && d.effective.tunnel_bound && d.effective.vpn_client !== null ? `<div class="small text-warning mb-2">This phone provisions through its VPN tunnel: a full VPN rebuild in System Admin (new CA) cuts it off until it is repointed. See Settings.</div>` : ''}
+			${id && d.effective && d.effective.vpn_unavailable ? `<div class="alert alert-danger">VPN profile unavailable: ${esc(d.effective.vpn_unavailable)}. Updates to this phone are held until it is back.</div>` : ''}
+			${id && d.effective && d.effective.vpn_cert ? (() => {
+				const c = d.effective.vpn_cert, now = Date.now() / 1000;
+				const parts = [['certificate', c.expires], ['CA', c.caExpires], ['CRL', c.crlExpires]].filter(([, t]) => t);
+				const soon = parts.some(([, t]) => t - now < 30 * 86400);
+				return `<div class="small ${soon ? 'text-danger' : 'text-muted'} mb-2">VPN client ${esc(d.effective.vpn_client)} expires: ${parts.map(([n, t]) => `${n} ${esc(new Date(t * 1000).toISOString().slice(0, 10))} (${Math.floor((t - now) / 86400)} days)`).join(' · ')}</div>`;
+			})() : ''}
 			${id && d.effective && d.effective.features && Object.keys(d.effective.features).length ? `<div class="small text-muted mb-2">Add-on features: ${Object.entries(d.effective.features).map(([f, sl]) => `<b>${esc(f)}</b> (${Object.entries(sl).map(([k, n]) => (k.startsWith('softkey') ? 'softkey ' : 'hidden key ') + n).join(', ')})`).join(' · ')}</div>` : ''}
 			${id ? '<div id="op-sync" class="op-sync"></div>' : ''}
 			<div class="form-row">
@@ -1029,7 +1037,7 @@
 	// ---- settings ------------------------------------------------------------
 	const SETTING_HELP = {
 		internal_host: 'Address phones on the LAN use (blank = auto-detected).',
-		external_host: 'Public hostname/IP for remote phones (template provisioning network "external").',
+		external_host: 'Public DNS name of this PBX (e.g. pbx.example.com). Phones on the "Automatic" provisioning network (the default) use it for provisioning and SIP, so you can move them to another PBX by changing DNS. LAN phones need it to resolve to an address they can reach (split DNS or NAT hairpinning). Tunnel-bound VPN phones keep using the tunnel.',
 		phone_scheme: 'https (recommended) or http (lab only). With https, plain-HTTP requests to /openprov/ are refused.',
 		https_mode: 'auto: FreePBX\'s own HTTPS if it has one (System Admin Port Management or 443), else OpenProv\'s HTTPS service. freepbx / service: only that one.',
 		https_port: 'FreePBX\'s HTTPS port for /openprov/. 0 = detect (System Admin\'s HTTPS ports, then 443).',
@@ -1073,6 +1081,28 @@
 			${w.legacy.present ? `<br><span class="text-danger">The old 0.1 vhost (port ${esc(w.legacy.ports.join(', '))}) is still installed: run <code>${esc(w.command)}</code> as root.</span>` : ''}
 			<br><button class="btn btn-default btn-sm" id="op-web-check">Re-check</button> <span id="op-web-check-out"></span>
 			System Admin VPN server: ${info.vpn_server ? 'enabled' : 'off'}.</p>
+			${(() => {
+				const r = info.vpn_rebuild || {};
+				const list = (rows) => rows.map((p) => `<li><b>${esc(p.name || p.mac)}</b> (${esc(p.mac)}, ${esc(p.model)}, VPN client ${esc(p.vpn_client)})</li>`).join('');
+				const down = (r.not_reconnected || []);
+				const downHtml = down.length ? `<div class="alert alert-danger"><b>VPN rebuilt:</b> these phones have their new VPN profile but their tunnel hasn't come back. Most likely System Admin's fail2ban <code>openvpn</code> jail banned their address while they were still trying the old certificate. Unban it in System Admin → Intrusion Detection, or as root: <code>fail2ban-client set openvpn unbanip &lt;address&gt;</code>.<ul class="mb-0">${down.map((p) => `<li><b>${esc(p.name || p.mac)}</b> (${esc(p.mac)}), last seen from ${esc(p.last_ip || '?')}</li>`).join('')}</ul></div>` : '';
+				if (down.length && !(r.waiting || []).length) return downHtml;
+				if ((r.waiting || []).length) {
+					return `<div class="alert alert-danger"><b>The VPN server was rebuilt</b> (new CA). These tunnel-bound phones could not fetch their new VPN profile. Set each one's Auto Provision server URL to <code>${esc(r.waiting[0].repoint_url)}</code>, or Re-arm it and use DHCP option 66 / RPS:<ul class="mb-0">${list(r.waiting)}</ul></div>`;
+				}
+				const p = r.prepare || {};
+				if (p.active) {
+					return `<div class="alert ${p.ready ? 'alert-success' : 'alert-info'}"><b>Preparing for a VPN rebuild.</b> ${esc(p.message)}
+						<ul class="mb-1">${p.phones.map((x) => `<li><b>${esc(x.name || x.mac)}</b> (${esc(x.mac)}): ${x.ready ? (x.direct ? `ready: provisioning directly from ${esc(x.last_ip)}` : 'ready: has the VPN-off config, tunnel closed') : (x.in_sync ? 'has the VPN-off config, tunnel still open' : `waiting for it to fetch the VPN-off config (last seen from ${esc(x.last_ip || '—')})`)}, ${esc(x.network)} address</li>`).join('')}</ul>
+						<button class="btn btn-default btn-sm" id="op-vpn-refresh">Refresh</button> <button class="btn btn-default btn-sm" id="op-vpn-finish">Give the VPN back now</button></div>`;
+				}
+				if ((r.stranded || []).length) {
+					return `<div class="alert alert-warning"><b>Before a full VPN rebuild in System Admin:</b> these phones provision through their VPN tunnel, which a rebuild (new CA) drops, so they would be cut off until repointed by hand.
+						Click <b>Prepare for VPN rebuild</b> first: OpenProv turns VPN off for every VPN phone during the rebuild, so they provision directly (LAN, or your external address for remote phones) and none of them trips System Admin's fail2ban by retrying an old certificate, then gives it back once it sees the new CA.<ul class="mb-1">${list(r.stranded)}</ul>
+						<button class="btn btn-warning btn-sm" id="op-vpn-prepare">Prepare for VPN rebuild</button></div>`;
+				}
+				return '';
+			})()}
 			<div class="form-row">${rows}</div>
 			<p class="small text-muted">What the Convergent dashboard may change is on the <a href="#" data-tab="dashboard">Dashboard</a> tab.</p>
 			<button class="btn btn-primary" id="op-gs-save">Save settings</button>
@@ -1085,6 +1115,10 @@
 			<div class="form-row"><div class="col-md-4"><input class="form-control" id="op-epm-map" placeholder='{"SIP-T57W":"T87W"}'></div><div class="col-md-3"><select class="form-control" id="op-epm-tpl">${(await lookups()).templates.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></div>
 			<div class="col-md-5"><button class="btn btn-default" id="op-epm-dry">Preview</button> <button class="btn btn-default" id="op-epm-run">Import</button></div></div>
 			<pre class="op-pre mt-2" id="op-epm-out"></pre>`;
+		const vpnBtn = (sel, action, ask) => { const b = $(sel); if (b) b.onclick = (e) => (!ask || confirm(ask)) && guard(e.target, async () => { await api(action); settings(); }); };
+		vpnBtn('#op-vpn-prepare', 'vpn.rebuild-prepare', 'Turn VPN off for every VPN phone until the VPN is rebuilt? Remote phones then need to reach your external address directly (provisioning and SIP).');
+		vpnBtn('#op-vpn-finish', 'vpn.rebuild-finish', 'Give the VPN back to the held phones now?');
+		vpnBtn('#op-vpn-refresh', 'vpn.rebuild-check', null);
 		$('#op-web-check').onclick = (e) => guard(e.target, async () => {
 			const r = await api('web.check');
 			$('#op-web-check-out').innerHTML = `<span class="${r.ok ? 'text-success' : 'text-danger'}">${esc(r.message)}</span> <code>${esc(r.url)}</code>`;

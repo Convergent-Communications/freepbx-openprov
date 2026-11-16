@@ -54,6 +54,9 @@ arguments can be JSON (`devices='["c4fc22a1b2c3"]'`).
 | `adopt` | `mac, model, extension?, template?` | |
 | `export.csv` / `import.csv` | `csv` | Columns: `mac,model,template,name,extension,extension2,enabled` |
 | `import.epm` | `dryRun?=true, template?, modelMap?` | Copies commercial EPM mappings across |
+| `vpn.rebuild-prepare` / `vpn.rebuild-finish` | `tunnelBoundOnly?=false` | Hold VPN off for the VPN phones (all, or only tunnel-bound) during a full VPN rebuild; given back automatically when the new CA is seen, or now with `finish`. Not allowed from the dashboard |
+| `vpn.rebuild-check` | | Tunnel-bound VPN phones a full VPN rebuild would cut off (`stranded`, with `repoint_url`), how many others are pushed automatically, and, after a detected rebuild, the phones still `waiting` |
+| `vpn.expiring` | `days?=30` | Phones whose VPN client certificate, the VPN CA or the CRL expires within `days` (expired included), soonest first |
 | `web.status` | | `/openprov/` published?, how phones reach it over HTTPS (`https`: mode, port, ok, message), OpenProv's HTTPS service, any 0.1 vhost left |
 | `web.check` | | Re-detects HTTPS (FreePBX's own, else OpenProv's service), then fetches `/openprov/_ping` as a LAN phone would |
 | `web --install` / `--uninstall` / `--check` (CLI only) | | Publish/unpublish `/openprov` and resolve HTTPS; as root `--install` also removes the 0.1 vhost. Never writes Apache config |

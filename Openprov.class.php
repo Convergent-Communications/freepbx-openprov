@@ -233,7 +233,67 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 		[$ok2, $msg2] = $web->removeLegacy(); // also drops the 0.1 firewall service
 		$this->legacyNotice($web->legacy()['present']);
 		$state = $web->resolve();
-		return [$ok && $ok2 && $state['ok'], trim($msg . "\n" . $msg2 . "\nHTTPS: " . $state['message'])];
+		return [$ok && $ok2 && $state['ok'], implode("\n", array_filter([$msg, $msg2, 'HTTPS: ' . $state['message']], fn($m) => trim($m) !== ''))];
+	}
+
+	/**
+	 * Warn (FreePBX notification) while any OpenProv phone's VPN certificate
+	 * or the VPN CA expires within Certificate Manager's alert threshold
+	 * (Advanced Settings CERT_DAYS_EXPIRATION_ALERT, default 30 days).
+	 * Runs from the 5-minute job.
+	 */
+	public function vpnExpiryNotice(): void
+	{
+		try {
+			$days = (int) ($this->FreePBX->Config->get('CERT_DAYS_EXPIRATION_ALERT') ?: 30);
+		} catch (\Throwable $e) {
+			$days = 30;
+		}
+		try {
+			$list = $this->service()->vpnExpiring($days);
+			$n = $this->FreePBX->Notifications;
+			if (!$list) {
+				$n->delete('openprov', 'vpn_expiry');
+				return;
+			}
+			$lines = array_map(fn($e) => sprintf('%s (%s, VPN client %d): %s', $e['name'] ?: $e['mac'], $e['mac'], $e['vpn_client'],
+				$e['days_left'] < 0 ? 'expired' : ($e['days_left'] . ' days left')), $list);
+			$n->add_warning('openprov', 'vpn_expiry', sprintf(_('OpenProv: %d phone VPN certificate(s) expire within %d days'), count($list), $days),
+				_('Regenerate them in System Admin → VPN Server (the certificates last CERT_DAYS_VAL days, set in Advanced Settings). OpenProv then pushes the new VPN profile to each phone automatically, while its current tunnel still works.') . "\n" . implode("\n", $lines),
+				'', true, true);
+		} catch (\Throwable $e) {
+		}
+	}
+
+	/**
+	 * After a full VPN rebuild in System Admin (the CA changed): a critical
+	 * notification naming the tunnel-bound phones that haven't fetched their
+	 * new profile, with the URL to repoint them to. Cleared when all are back.
+	 */
+	public function vpnRebuildNotice(): void
+	{
+		try {
+			$waiting = $this->service()->vpnRebuildWatch();
+			$n = $this->FreePBX->Notifications;
+			if (!$waiting) {
+				$n->delete('openprov', 'vpn_rebuild');
+				return;
+			}
+			$cut = array_filter($waiting, fn($p) => empty($p['not_reconnected']));
+			$down = array_filter($waiting, fn($p) => !empty($p['not_reconnected']));
+			$text = '';
+			if ($cut) {
+				$text .= _('These phones provision through their VPN tunnel, which the rebuild dropped, so they cannot fetch their new VPN profile. Until each is repointed it gets no updates, and it cannot register if it registers through the tunnel:') . "\n"
+					. implode("\n", array_map(fn($p) => sprintf('%s (%s, %s): set its Auto Provision server URL to %s, or Re-arm it and use DHCP option 66 / RPS', $p['name'] ?: $p['mac'], $p['mac'], $p['model'], $p['repoint_url']), $cut)) . "\n";
+			}
+			if ($down) {
+				$text .= _('These phones have their new VPN profile but their tunnel has not come back. Most likely System Admin\'s fail2ban "openvpn" jail banned their address while they kept trying the old certificate (24 hours by default). Unban it in System Admin → Intrusion Detection, or as root: fail2ban-client set openvpn unbanip <address> (their public address for remote phones).') . "\n"
+					. implode("\n", array_map(fn($p) => sprintf('%s (%s, VPN client %d), last seen from %s', $p['name'] ?: $p['mac'], $p['mac'], $p['vpn_client'], $p['last_ip'] ?: '?'), $down));
+			}
+			$n->add_critical('openprov', 'vpn_rebuild', sprintf(_('OpenProv: VPN rebuilt; %d phone(s) need attention'), count($waiting)),
+				_('System Admin\'s VPN server was rebuilt (new CA).') . "\n" . $text, '', true, false);
+		} catch (\Throwable $e) {
+		}
 	}
 
 	private function legacyNotice(bool $show): void

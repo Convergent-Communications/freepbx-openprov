@@ -183,14 +183,25 @@ class Settings
 	 */
 	public function webState(): array
 	{
-		$v = ($this->get)('web_state');
-		$v = is_string($v) ? json_decode($v, true) : $v;
-		return is_array($v) ? $v : [];
+		return $this->state('web_state');
 	}
 
 	public function setWebState(array $state): void
 	{
-		($this->set)('web_state', json_encode($state));
+		$this->setState('web_state', $state);
+	}
+
+	/** Internal JSON state kept next to the settings (not user-visible settings). */
+	public function state(string $key): array
+	{
+		$v = ($this->get)($key);
+		$v = is_string($v) ? json_decode($v, true) : $v;
+		return is_array($v) ? $v : [];
+	}
+
+	public function setState(string $key, array $state): void
+	{
+		($this->set)($key, json_encode($state));
 	}
 
 	/** Port written into HTTPS phone URLs. */

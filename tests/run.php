@@ -109,9 +109,15 @@ class FakePbx extends Pbx
 		return isset($this->users[$ext]) ? ['auth' => $ext, 'user' => $ext, 'secret' => "secret$ext", 'transport' => ''] : null;
 	}
 
-	public function pjsipPort(): int
+	/** Set to fake FreePBX's PJSIP transports; null = none configured. */
+	public function setTransports(?array $t): void
 	{
-		return 5060;
+		$this->transports = $t ?? [];
+	}
+
+	public function pjsipTransports(): array
+	{
+		return $this->transports ?? [];
 	}
 
 	public function timezone(): string
@@ -141,9 +147,30 @@ class FakePbx extends Pbx
 
 class FakeVpn extends Vpn
 {
+	public ?string $version = 'v1';
+	public ?int $expires = null;
+	public ?string $ca = null;
+	public array $connected = [];
+
+	public function connectedClients(): array
+	{
+		return $this->connected;
+	}
+
+	public function caFingerprint(): ?string
+	{
+		return $this->ca;
+	}
+
 	public function clients(): array
 	{
-		return [6 => ['id' => 6, 'description' => '212', 'enabled' => true, 'serverremote' => '192.0.2.1', 'remote' => '', 'useserverremote' => true, 'hasFiles' => true]];
+		return [6 => ['id' => 6, 'description' => '212', 'enabled' => true, 'serverremote' => '192.0.2.1', 'remote' => '', 'useserverremote' => true, 'hasFiles' => true,
+			'expires' => $this->expires ?? time() + 700 * 86400, 'caExpires' => time() + 720 * 86400]];
+	}
+
+	public function profileVersion(int $clientId): ?string
+	{
+		return $this->version;
 	}
 
 	public function clientForUser(int $uid): ?int
@@ -169,11 +196,6 @@ class FakeVpn extends Vpn
 	public function serverEnabled(): bool
 	{
 		return true;
-	}
-
-	public function connectedClients(): array
-	{
-		return [];
 	}
 
 	public function yealinkTar(int $clientId, ?array $remotes = null): ?string
@@ -1148,6 +1170,212 @@ $tests['server: plain HTTP is refused unless phone_scheme is http; URLs carry /o
 	throws(fn() => $w->settings->set('https_mode', 'apache'), 'auto, freepbx or service');
 	$w->settings->set('tls_cert', '/x');
 	ok(!array_key_exists('tls_cert', $w->settings->all()), 'retired settings are ignored');
+};
+
+// ---- VPN: profile version, certificate expiry, firmware per model ---------------
+
+$tests['vpn: a rebuilt certificate changes the profile URL (phone gets pushed the new profile); expiry is tracked'] = function () {
+	$dir = sys_get_temp_dir() . '/openprov-vpn-' . bin2hex(random_bytes(4));
+	mkdir("$dir/clients", 0777, true);
+	$mk = function (int $days, string $cn) {
+		$k = openssl_pkey_new(['private_key_bits' => 2048]);
+		$x = openssl_csr_sign(openssl_csr_new(['commonName' => $cn], $k), null, $k, $days);
+		openssl_x509_export($x, $crt);
+		openssl_pkey_export($k, $key);
+		return [$crt, $key];
+	};
+	[$ca] = $mk(730, 'FreePBX');
+	file_put_contents("$dir/sysadmin_ca.crt", $ca);
+	[$crt, $key] = $mk(730, 'client6');
+	file_put_contents("$dir/clients/sysadmin_client6.crt", $crt);
+	file_put_contents("$dir/clients/sysadmin_client6.key", $key);
+	$db = new PDO('sqlite::memory:');
+	$db->exec('CREATE TABLE sysadmin_options (`key` TEXT, `value` TEXT)');
+	$db->exec("INSERT INTO sysadmin_options VALUES ('vpnclients', '{\"6\":{\"enabled\":\"1\",\"description\":\"212\"}}'), ('vpnserver_serverremote', '192.0.2.1')");
+	$vpn = new Vpn($db, $dir);
+	$c = $vpn->clients()[6];
+	ok(abs($c['expires'] - (time() + 730 * 86400)) < 86400, 'client expiry read from the certificate');
+	ok(abs($c['caExpires'] - (time() + 730 * 86400)) < 86400, 'CA expiry');
+	$v1 = $vpn->profileVersion(6);
+	eq($v1, $vpn->profileVersion(6), 'stable');
+	[$crt2, $key2] = $mk(730, 'client6'); // System Admin regenerated the client
+	file_put_contents("$dir/clients/sysadmin_client6.crt", $crt2);
+	file_put_contents("$dir/clients/sysadmin_client6.key", $key2);
+	ok($vpn->profileVersion(6) !== $v1, 'new certificate, new profile version');
+	eq(null, $vpn->profileVersion(9), 'no files, no version');
+	exec('rm -rf ' . escapeshellarg($dir));
+
+	// In the phone config: the profile URL carries the version, and a change re-notifies.
+	$w = world();
+	phone($w, ['settings' => ['vpn' => 'auto']]);
+	$d = $w->store->deviceByMac(MAC);
+	$w->vpn->version = 'aaa';
+	$url1 = kv($w->builder->render($d)['text'])['openvpn.url'] ?? '';
+	ok(preg_match('#-vpn\.tar\?v=[0-9a-f]{12}$#', $url1) === 1, $url1);
+	$h1 = $w->builder->render($d)['hash'];
+	$w->vpn->version = 'bbb';
+	ok($w->builder->render($d)['hash'] !== $h1, 'rebuild changes the config hash, so sync.changed pushes it');
+	// The server still serves the tar with the query string on.
+	$w->vpn->expires = time() + 10 * 86400;
+	$exp = $w->svc->vpnExpiring(30);
+	eq(1, count($exp));
+	eq([MAC, 6, 10], [$exp[0]['mac'], $exp[0]['vpn_client'], $exp[0]['days_left']]);
+	eq([], $w->svc->vpnExpiring(5), 'outside the window');
+
+	// Mid-rebuild (files unreadable): the change is held, not pushed.
+	$w->store->touchDevice($d['id'], ['last_hash' => 'old', 'notified_hash' => 'old']);
+	$sent = count($w->sent);
+	$w->vpn->version = null;
+	$r = $w->svc->syncChanged();
+	ok(str_contains($r[0]['message'] ?? '', 'held'), json_encode($r));
+	eq($sent, count($w->sent), 'no notify while the VPN profile is unavailable');
+	$w->vpn->version = 'ccc';
+	$r = $w->svc->syncChanged();
+	ok(count($w->sent) > $sent, 'pushed once the profile is back: ' . json_encode($r));
+};
+
+$tests['vpn: a full rebuild is warned about beforehand and detected afterwards'] = function () {
+	$w = world();
+	phone($w, ['settings' => ['vpn' => 'auto']]); // T87W: tunnel-bound
+	$w->svc->saveDevice(['mac' => '80:5e:c0:a1:b2:c4', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '212']], 'settings' => ['vpn' => 'auto']]);
+	$r = $w->svc->vpnRebuildCheck();
+	eq([MAC], array_column($r['stranded'], 'mac'), 'only the tunnel-bound phone');
+	eq(1, $r['pushed'], 'the T57W is pushed automatically');
+	eq('https://192.0.2.10/openprov', $r['stranded'][0]['repoint_url']);
+	eq(null, $r['rebuilt_at']);
+	// First run records the CA; nothing to report.
+	$w->vpn->ca = 'AA';
+	eq([], $w->svc->vpnRebuildWatch(1000));
+	eq([], $w->svc->vpnRebuildWatch(2000), 'same CA: nothing');
+	// Rebuild: the T87W hasn't fetched since.
+	$w->vpn->ca = 'BB';
+	eq([MAC], array_column($w->svc->vpnRebuildWatch(3000), 'mac'));
+	eq(3000, $w->svc->vpnRebuildCheck()['rebuilt_at']);
+	eq([MAC], array_column($w->svc->vpnRebuildWatch(3300), 'mac'), 'still waiting');
+	// It comes back (repointed): cleared.
+	$w->store->touchDevice($w->store->deviceByMac(MAC)['id'], ['last_seen' => 3500]);
+	$w->vpn->connected = [6 => ['address' => '10.8.0.2', 'real' => '192.168.1.246:1', 'since' => 3500]];
+	eq([], $w->svc->vpnRebuildWatch(3700), 'fetched and reconnected');
+	eq(null, $w->svc->vpnRebuildCheck()['rebuilt_at'], 'state cleared');
+	$w->vpn->ca = null;
+	eq([], $w->svc->vpnRebuildWatch(4000), 'unreadable CA (mid-rebuild): no false alarm');
+};
+
+$tests['vpn: prepare for a rebuild holds tunnel-bound phones off the VPN, and gives it back on the new CA'] = function () {
+	$w = world();
+	phone($w, ['settings' => ['vpn' => 'auto']]); // T87W, tunnel-bound
+	$w->svc->saveDevice(['mac' => '80:5e:c0:a1:b2:c4', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '212']], 'settings' => ['vpn' => 'auto']]);
+	$d = fn() => $w->store->deviceByMac(MAC);
+	$cfg = fn() => kv($w->builder->render($d(), '10.8.0.2')['text']);
+	eq('1', $cfg()['static.network.vpn_enable']);
+	ok(str_contains($cfg()['static.auto_provision.server.url'], '10.8.0.1'), 'normally through the tunnel');
+	$w->vpn->ca = 'AA';
+	$w->vpn->connected = [6 => ['address' => '10.8.0.2', 'real' => '192.168.1.246:49203', 'since' => 1]];
+	$st = $w->svc->vpnRebuildPrepare();
+	eq(true, $st['active']);
+	eq(false, $st['ready'], 'not until the phone checked in directly');
+	eq('0', $cfg()['static.network.vpn_enable'], 'VPN held off');
+	eq('https://192.0.2.10/openprov', $cfg()['static.auto_provision.server.url'], 'LAN phone: internal address');
+	eq('auto', $d()['settings']['vpn'], 'the phone\'s own setting is untouched');
+	eq('0', kv($w->builder->render($w->store->deviceByMac('805ec0a1b2c4'))['text'])['static.network.vpn_enable'], 'the T57W is held too (fail2ban)');
+	$w->svc->vpnRebuildFinish();
+	$w->svc->vpnRebuildPrepare(true);
+	eq('1', kv($w->builder->render($w->store->deviceByMac('805ec0a1b2c4'))['text'])['static.network.vpn_enable'], 'tunnelBoundOnly: the T57W is not held');
+	// It fetches the VPN-off config through the tunnel: not ready while the tunnel is up...
+	$w->server->handle('/c4fc22a1b2c3.cfg', UA, '10.8.0.2', MAC, $d()['prov_pass']);
+	eq(false, $w->svc->vpnRebuildPrepareStatus()['ready'], 'tunnel still up');
+	// ...ready once the tunnel is gone.
+	$w->vpn->connected = [];
+	ok($w->svc->vpnRebuildPrepareStatus()['ready'], json_encode($w->svc->vpnRebuildPrepareStatus()));
+	// Rebuild: new CA. The job gives the VPN back and the phone gets a grace period.
+	$w->vpn->ca = 'BB';
+	$w->vpn->connected = [6 => ['address' => '10.8.0.2', 'real' => '192.168.1.246:1', 'since' => 1]];
+	eq([], $w->svc->vpnRebuildWatch(time() + 10), 'no alarm for a handed-back phone in its grace period');
+	eq(false, $w->svc->vpnRebuildPrepareStatus()['active']);
+	eq('1', $cfg()['static.network.vpn_enable'], 'VPN back');
+	ok(count($w->sent) > 0, 'pushed');
+	// Past the grace period without fetching: it's reported, and so is its tunnel being down.
+	$late0 = $w->svc->vpnRebuildWatch(time() + 1000); eq([MAC], array_column($late0, 'mac'), json_encode($late0));
+	$w->vpn->connected = []; // tunnels not back (e.g. fail2ban)
+	$late = $w->svc->vpnRebuildWatch(time() + 1000);
+	ok(count(array_filter($late, fn($r) => !empty($r['not_reconnected']))) >= 1, 'tunnel not back is reported: ' . json_encode($late));
+	// A public VPN address without external_host is refused.
+	$w->svc->vpnRebuildFinish();
+	$w->vpn->connected = [6 => ['address' => '10.8.0.2', 'real' => '203.0.113.9:1194', 'since' => 1]];
+	throws(fn() => $w->svc->vpnRebuildPrepare(), 'external_host');
+	$w->settings->set('external_host', 'pbx.example.com');
+	$w->svc->vpnRebuildPrepare();
+	ok(str_contains($cfg()['static.auto_provision.server.url'], 'pbx.example.com'), 'remote phone: external address');
+	eq(['c4fc22a1b2c3', '805ec0a1b2c4'], $w->svc->vpnRebuildFinish()['released'], 'every VPN phone was held');
+	eq('1', $cfg()['static.network.vpn_enable']);
+};
+
+$tests['render: firmware goes only to the models it is for'] = function () {
+	eq(true, ConfigBuilder::firmwareFits(['name' => 'T77_T73_T74_T73U_T74U_T77U_T85W_T87W_-185.87.0.42.rom'], 'T87W'));
+	eq(false, ConfigBuilder::firmwareFits(['name' => 'T77_T73_T74_T73U_T74U_T77U_T85W_T87W_-185.87.0.42.rom'], 'T57W'));
+	eq(true, ConfigBuilder::firmwareFits(['name' => 'T57W(T57W)-96.87.0.20.rom'], 'T57W'));
+	eq(true, ConfigBuilder::firmwareFits(['name' => 'firmware.rom'], 'T57W'), 'no model in the name: as before');
+	eq(false, ConfigBuilder::firmwareFits(['name' => 'firmware.rom', 'model' => 'T87W'], 'T57W'), 'the asset model wins');
+};
+
+$tests['render: phones follow the public DNS name by default (auto), tunnel-bound VPN phones keep the tunnel'] = function () {
+	$w = world();
+	phone($w); // template "Base": prov_network not set = auto
+	$cfg = fn($mac = MAC) => kv($w->builder->render($w->store->deviceByMac($mac))['text']);
+	eq('https://192.0.2.10/openprov', $cfg()['static.auto_provision.server.url'], 'no external_host: internal address');
+	$w->settings->set('external_host', 'pbx.example.com');
+	eq('https://pbx.example.com/openprov', $cfg()['static.auto_provision.server.url'], 'auto: the DNS name');
+	eq('pbx.example.com', $cfg()['account.1.sip_server.1.address'], 'SIP follows it too');
+	eq('https://pbx.example.com/openprov', $w->svc->info()['bootstrap_url']);
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['prov_network' => 'internal']]);
+	eq('https://192.0.2.10/openprov', $cfg()['static.auto_provision.server.url'], 'an explicit internal still wins');
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['prov_network' => '', 'vpn' => 'auto']]);
+	ok(str_contains($cfg()['static.auto_provision.server.url'], '10.8.0.1'), 'tunnel-bound T87W with VPN: the tunnel');
+	eq('auto', json_decode(file_get_contents(dirname(__DIR__) . '/seeds/default-template.json'), true)['settings']['prov_network'], 'new installs default to auto');
+};
+
+// ---- SIP port from FreePBX 17's PJSIP transports -------------------------------
+
+$tests['render: the SIP port comes from FreePBX\'s PJSIP transports (non-standard 5160, TLS, extension transport, NAT)'] = function () {
+	$w = world();
+	phone($w);
+	$port = fn() => kv($w->builder->render($w->store->deviceByMac(MAC))['text'])['account.1.sip_server.1.port'];
+	eq('5060', $port(), 'nothing configured: 5060');
+	$t = fn($proto, $ip, $p, $ext = 0) => ["$ip-$proto" => ['proto' => $proto, 'ip' => $ip, 'port' => $p, 'extport' => $ext]];
+	// The cloud box: PJSIP UDP on 5160, bound to its own address.
+	$w->pbx->setTransports($t('udp', '203.0.113.5', 5160));
+	eq('5160', $port(), 'non-0.0.0.0 bind on 5160');
+	$w->pbx->setTransports($t('udp', '0.0.0.0', 5160) + $t('tls', '0.0.0.0', 5161) + $t('tcp', '0.0.0.0', 5162));
+	eq('5160', $port());
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['sip_transport' => '2']]);
+	eq('5161', $port(), 'TLS transport picks the TLS port');
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['sip_transport' => '1']]);
+	eq('5162', $port(), 'TCP');
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['sip_transport' => '0', 'sip_port' => '6000']]);
+	eq('6000', $port(), 'an explicit sip_port still wins');
+	// External phones use the transport's external signaling port.
+	$w->pbx->setTransports($t('udp', '0.0.0.0', 5160, 15160));
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['sip_port' => '', 'prov_network' => 'external']]);
+	eq('15160', $port(), 'external port for external phones');
+	// Transport TLS asked for but only UDP exists: UDP's port.
+	$w->pbx->setTransports($t('udp', '0.0.0.0', 5160));
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['prov_network' => 'internal', 'sip_transport' => '2']]);
+	eq('5160', $port());
+};
+
+$tests['pbx: PJSIP transports are read from Sipsettings (kvstore), not chan_sip\'s sipsettings table'] = function () {
+	$db = new PDO('sqlite::memory:');
+	$db->exec('CREATE TABLE sipsettings (keyword TEXT, data TEXT)');
+	$db->exec("INSERT INTO sipsettings VALUES ('bindport', '5060'), ('udpport-0.0.0.0', '9999')"); // chan_sip / stale: must be ignored
+	$db->exec('CREATE TABLE kvstore_Sipsettings (`key` TEXT, val TEXT, type TEXT, id TEXT)');
+	$db->exec("INSERT INTO kvstore_Sipsettings VALUES ('binds', '{\"udp\":{\"198.51.100.7\":\"on\"},\"tls\":{\"0.0.0.0\":\"on\"}}', 'json-arr', 'noid'), ('udpport-198.51.100.7', '5160', NULL, 'noid'), ('udpextport-198.51.100.7', ' 25160 ', NULL, 'noid')");
+	$pbx = new Pbx($db, null);
+	eq(['198.51.100.7-udp' => ['proto' => 'udp', 'ip' => '198.51.100.7', 'port' => 5160, 'extport' => 25160], '0.0.0.0-tls' => ['proto' => 'tls', 'ip' => '0.0.0.0', 'port' => 5061, 'extport' => 0]], $pbx->pjsipTransports());
+	eq(5160, $pbx->pjsipPort());
+	eq(25160, $pbx->pjsipPort('udp', '', true));
+	eq(5061, $pbx->pjsipPort('tls'));
+	eq(5160, $pbx->pjsipPort('tls', '198.51.100.7-udp'), 'the extension\'s own transport wins');
+	eq(5060, (new Pbx(new PDO('sqlite::memory:'), null))->pjsipPort(), 'no FreePBX data: 5060');
 };
 
 // ---- HTTPS: FreePBX's own, else OpenProv's service ------------------------------

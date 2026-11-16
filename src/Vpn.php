@@ -36,6 +36,14 @@ class Vpn
 				'remote' => (string) ($c['remote'] ?? ''),
 				'useserverremote' => ($c['useserverremote'] ?? '1') === '1',
 				'hasFiles' => is_readable($this->clientFile((int) $id, 'key')),
+				// Certificate lifetime: System Admin generates these with
+				// Certificate Manager's validity (Advanced Settings,
+				// CERT_DAYS_VAL); OpenProv only reads them.
+				'expires' => $this->certExpiry($this->clientFile((int) $id, 'crt')),
+				'caExpires' => $this->certExpiry($this->dir . '/sysadmin_ca.crt'),
+				// The server checks this CRL (crl-verify): when it passes its
+				// nextUpdate, OpenVPN refuses every client.
+				'crlExpires' => $this->crlExpiry(),
 			];
 		}
 		ksort($out);
@@ -112,6 +120,65 @@ class Vpn
 			}
 		}
 		return isset($kv['vpn_client']) && $kv['vpn_client'] !== '' ? (int) $kv['vpn_client'] : null;
+	}
+
+	/**
+	 * SHA-256 of System Admin's VPN CA. It changes only when the whole VPN
+	 * server is rebuilt (new CA), which cuts every tunnel at once.
+	 */
+	public function caFingerprint(): ?string
+	{
+		$pem = @file_get_contents($this->dir . '/sysadmin_ca.crt');
+		if ($pem === false) {
+			return null;
+		}
+		$fp = @openssl_x509_fingerprint($pem, 'sha256');
+		return $fp === false ? null : $fp;
+	}
+
+	/** nextUpdate of System Admin's CRL (unix time), or null. */
+	public function crlExpiry(): ?int
+	{
+		$out = [];
+		exec('openssl crl -in ' . escapeshellarg($this->dir . '/sysadmin_crl.pem') . ' -noout -nextupdate 2>/dev/null', $out, $rc);
+		if ($rc !== 0 || !preg_match('/nextUpdate=(.+)$/', implode("\n", $out), $m)) {
+			return null;
+		}
+		$t = strtotime(trim($m[1]));
+		return $t === false ? null : $t;
+	}
+
+	/** notAfter of a PEM certificate file (unix time), or null. */
+	public function certExpiry(string $file): ?int
+	{
+		$pem = @file_get_contents($file);
+		if ($pem === false) {
+			return null;
+		}
+		$x = @openssl_x509_parse($pem);
+		return is_array($x) && isset($x['validTo_time_t']) ? (int) $x['validTo_time_t'] : null;
+	}
+
+	/**
+	 * Changes whenever what yealinkTar() would hand the phone changes: the
+	 * CA, the client certificate or key (a VPN rebuild or a regenerated
+	 * client), or the server address/port. Put in the profile URL so the
+	 * phone's config changes, OpenProv's change detection sends check-sync,
+	 * and the phone downloads the new profile instead of keeping a dead one.
+	 */
+	public function profileVersion(int $clientId): ?string
+	{
+		$parts = [];
+		foreach ([$this->dir . '/sysadmin_ca.crt', $this->clientFile($clientId, 'crt'), $this->clientFile($clientId, 'key')] as $f) {
+			$v = @file_get_contents($f);
+			if ($v === false) {
+				return null;
+			}
+			$parts[] = $v;
+		}
+		$c = $this->clients()[$clientId] ?? [];
+		$parts[] = ($c['serverremote'] ?? '') . '|' . $this->option('vpnserver_serverremote') . '|' . $this->port() . '|' . $this->option('vpnserver_renegsec');
+		return substr(sha1(implode("\0", $parts)), 0, 12);
 	}
 
 	/**

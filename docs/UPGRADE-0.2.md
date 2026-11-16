@@ -118,7 +118,11 @@ The box has System Admin with no SSL ports (admin 80, UCP 81, provisioning
 | 8449 taken by another process | ✅ Service not started; "Port 8449 is already in use by another process … Set service_port to a free port." in `web --check` and the GUI; Apache untouched (same PID), GUI 200. After the port was freed, the check started it again |
 | Incident repro: 0.1 vhost + `127.0.0.1:8443` held + reload | ✅ Reproduced: `AH00072 … could not bind to address 0.0.0.0:8443`, `no listening sockets available`, Apache `activating`, GUI down. `fwconsole openprov web --install` removed the vhost and started Apache; GUI and UCP 200 again; the other process kept 8443 |
 | `fwconsole start` with the service deleted from pm2 | ✅ "Running Asterisk post from Openprov module", service back online, ping 200 |
-| Phone repointed and provisioning end to end | Not done: the lab T87W still has `:8443` saved and needs repointing (step 2 above) |
+| T57W repointed to the lab through its web API, provisioning end to end | ✅ It refused the lab's self-signed certificate at first (TLS alert; the T57W only accepts trusted certificates by default). After the certificate was added to its trusted list: bootstrap, claim, files, VPN profile; tunnel up (10.8.0.4), ext 202 registered |
+| VPN client reissue pushed to a phone (0.2.2) | ✅ T57W: client 5's certificate reissued (730 days = `CERT_DAYS_VAL`) and the old one revoked; openprov sent check-sync; new profile downloaded and tunnel up on the new certificate one second later; registration kept |
+| SIP port (0.2.2) | ✅ Read from FreePBX 17's PJSIP transports (`Sipsettings`); before 0.2.2 openprov read chan_sip's table and always sent 5060 |
+| T87W repointed to the tunnel URL (step 2) | ✅ Provisioned through the tunnel; new versioned VPN profile; reconnected |
+| Full VPN rebuild with Prepare (0.2.2) | ✅ T87W held off the VPN, switched to direct over the LAN, rebuild, VPN given back automatically; new profile fetched directly; tunnel and SIP over the tunnel back in about 15 s. T57W (not held, as the first version only held tunnel-bound phones) was banned by fail2ban and reconnected after the unban, so Prepare now holds every VPN phone |
 
 ## Test plan
 

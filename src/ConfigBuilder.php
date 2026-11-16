@@ -174,6 +174,19 @@ class ConfigBuilder
 		return ['offset' => $std === 0 ? '0' : $off, 'name' => ''];
 	}
 
+	/**
+	 * Resolve a template/phone prov_network: "auto" (the default) is the public
+	 * name (external_host) when one is set, so phones follow DNS to whichever
+	 * PBX it points at; otherwise the internal address.
+	 */
+	public function defaultNetwork(string $network = 'auto'): string
+	{
+		if (in_array($network, ['internal', 'external', 'vpn'], true)) {
+			return $network;
+		}
+		return $this->settings->get('external_host') !== '' ? 'external' : 'internal';
+	}
+
 	/** Host phones should use on a provisioning network. */
 	public function hostFor(string $network): string
 	{
@@ -191,6 +204,23 @@ class ConfigBuilder
 			return (string) $this->settings->get('external_host');
 		}
 		return $this->settings->internalHost();
+	}
+
+	/**
+	 * Is a firmware file meant for this model? Its model field if set, else
+	 * the models Yealink lists in the file name
+	 * ("T77_T73_T74_..._T87W_-185.87.0.42.rom"); a name listing no model is
+	 * trusted as before. Keeps a template's T87W firmware off a T57W.
+	 */
+	public static function firmwareFits(array $asset, string $model): bool
+	{
+		$model = strtoupper($model);
+		if (($asset['model'] ?? '') !== '') {
+			return strtoupper((string) $asset['model']) === $model;
+		}
+		$tokens = array_map('strtoupper', preg_split('/[^A-Za-z0-9]+/', (string) ($asset['name'] ?? ''), -1, PREG_SPLIT_NO_EMPTY));
+		$models = array_filter($tokens, fn($t) => preg_match('/^[A-Z]{1,2}\d{2,3}[A-Z]{0,2}$/', $t) && !preg_match('/^\d/', $t));
+		return !$models || in_array($model, $tokens, true);
 	}
 
 	public function baseUrl(string $network, ?array $creds = null): string
@@ -245,7 +275,17 @@ class ConfigBuilder
 		$nameSource = ($s['name_source'] ?? 'extension') === 'user' ? 'user' : 'extension';
 		$lines = $this->store->lines($device['id']);
 		$vpnClient = $this->vpnClient($device, $s, $lines);
-		$network = $s['prov_network'] ?? 'internal';
+		$network = $this->defaultNetwork((string) ($s['prov_network'] ?? 'auto'));
+		// "Prepare for VPN rebuild" (Service::vpnRebuildPrepare): this phone's
+		// VPN is held off and it provisions from a direct address until the
+		// rebuild is done; its own settings are untouched.
+		$vpnHeld = null;
+		$held = $this->settings->state('vpn_rebuild')['prepare']['phones'][$device['mac']] ?? null;
+		if ($held !== null && $vpnClient !== null) {
+			$vpnHeld = $vpnClient;
+			$vpnClient = null;
+			$network = ($held['network'] ?? 'internal') === 'external' ? 'external' : 'internal';
+		}
 		// Models whose provisioning downloader is bound to the VPN interface
 		// while the tunnel is up (T87W 185.87.x: "durl use network interface
 		// tun0") can only provision from an address reached through the
@@ -270,7 +310,13 @@ class ConfigBuilder
 		$creds = ['user' => $device['prov_user'], 'pass' => $device['prov_pass']];
 
 		$sipHost = trim((string) ($s['sip_server'] ?? '')) ?: $this->hostFor($network);
-		$sipPort = trim((string) ($s['sip_port'] ?? '')) ?: (string) $this->pbx->pjsipPort();
+		// Port: the template/phone's sip_port, else the PBX's PJSIP transport
+		// for the extension (its own transport, else the one matching
+		// sip_transport: 0 UDP, 1 TCP, 2 TLS).
+		$fixedPort = trim((string) ($s['sip_port'] ?? ''));
+		$proto = ['1' => 'tcp', '2' => 'tls'][(string) ($s['sip_transport'] ?? '0')] ?? 'udp';
+		$portFor = fn(string $transport = '') => $fixedPort !== '' ? $fixedPort : (string) $this->pbx->pjsipPort($proto, $transport, $network === 'external');
+		$sipPort = $portFor();
 		$accountFormat = (string) ($s['account_label_format'] ?? '{ext}');
 
 		$accounts = [];
@@ -305,7 +351,7 @@ class ConfigBuilder
 				'label' => $l['label'] !== '' ? $l['label'] : Util::label($accountFormat, $l['extension'], $name, $np['first'], $np['last']),
 				'display_name' => $name !== '' ? $name : $l['extension'],
 				'auth' => $sip['auth'], 'user' => $sip['user'], 'secret' => $sip['secret'],
-				'server' => $sipHost, 'port' => $sipPort, 'custom' => false,
+				'server' => $sipHost, 'port' => $portFor((string) ($sip['transport'] ?? '')), 'custom' => false,
 			];
 		}
 
@@ -396,11 +442,25 @@ class ConfigBuilder
 		}
 		$urls['ringtones'] = $ringFiles;
 		$urls['ring_type'] = $ringType;
-		if (($s['firmware'] ?? '') !== '' && ($a = $this->store->asset((int) $s['firmware'])) && $a['kind'] === 'firmware') {
+		if (($s['firmware'] ?? '') !== '' && ($a = $this->store->asset((int) $s['firmware'])) && $a['kind'] === 'firmware'
+			&& self::firmwareFits($a, (string) $device['model'])) {
 			$urls['firmware'] = "$assetBase/a/firmware/{$a['id']}/" . rawurlencode($a['name']);
 		}
+		// The phone should have a VPN profile but it can't be built right now
+		// (System Admin's client list or the client's files unreadable, e.g.
+		// mid-rebuild): sync must not push this render (Service::syncChanged).
+		$vpnUnavailable = null;
+		if ($vpnClient !== null && !isset($this->vpn->clients()[$vpnClient])) {
+			$vpnUnavailable = "VPN client $vpnClient is not in System Admin's client list";
+		} elseif ($vpnClient !== null && $this->vpn->profileVersion($vpnClient) === null) {
+			$vpnUnavailable = "VPN client $vpnClient's certificate files are not readable";
+		}
 		if ($vpnClient !== null) {
-			$urls['vpn'] = $this->baseUrl($onTunnel ? $network : $directNetwork, $creds) . '/' . $device['mac'] . '-vpn.tar';
+			// ?v= changes with the certificates/server (Vpn::profileVersion), so a
+			// VPN rebuild changes this config and the phone fetches the new profile.
+			$ver = $this->vpn->profileVersion($vpnClient);
+			$ver = $ver === null ? '' : '?v=' . substr(sha1($ver . '|' . $this->settings->get('vpn_external_remote')), 0, 12);
+			$urls['vpn'] = $this->baseUrl($onTunnel ? $network : $directNetwork, $creds) . '/' . $device['mac'] . '-vpn.tar' . $ver;
 		}
 
 		$multicast = [];
@@ -425,6 +485,8 @@ class ConfigBuilder
 			'keys' => $keys,
 			'urls' => $urls,
 			'vpn_client' => $vpnClient,
+			'vpn_held' => $vpnHeld,
+			'vpn_unavailable' => $vpnUnavailable,
 			'prov' => $creds,
 			'passwords' => [
 				'admin' => $this->adminPassword($s, $device),

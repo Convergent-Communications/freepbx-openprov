@@ -8,7 +8,7 @@ namespace FreePBX\modules\Openprov;
  */
 class Service
 {
-	public const VERSION = '0.2.1';
+	public const VERSION = '0.2.2';
 	private bool $deferSync = false;
 
 	public function __construct(
@@ -36,8 +36,9 @@ class Service
 				'templates' => count($this->store->templates()),
 				'assets' => count($this->store->assets()),
 			],
-			'bootstrap_url' => $this->builder->baseUrl('internal'),
+			'bootstrap_url' => $this->builder->baseUrl($this->builder->defaultNetwork()),
 			'vpn_server' => $this->vpn->serverEnabled(),
+			'vpn_rebuild' => $this->vpnRebuildCheck(),
 		];
 	}
 
@@ -94,6 +95,224 @@ class Service
 	public function extensions(): array
 	{
 		return array_values($this->pbx->extensions());
+	}
+
+	/**
+	 * Which phones a full VPN rebuild in System Admin (new CA) would cut off:
+	 * VPN phones on tunnel-bound models provision through the tunnel the
+	 * rebuild drops, so they can't fetch their new profile (DESIGN.md D8a, D9).
+	 * Other VPN phones are pushed the new profile automatically.
+	 * Returns {stranded: [{mac, name, model, vpn_client, repoint_url}], pushed: n,
+	 * rebuilt_at: unix time of a detected rebuild or null, waiting: [...]}.
+	 */
+	public function vpnRebuildCheck(?int $now = null): array
+	{
+		$now ??= time();
+		$stranded = [];
+		$others = [];
+		$pushed = 0;
+		$direct = $this->builder->baseUrl($this->settings->get('external_host') !== '' ? 'external' : 'internal');
+		$rebuilt = $this->settings->state('vpn_rebuild');
+		$at = isset($rebuilt['rebuilt_at']) ? (int) $rebuilt['rebuilt_at'] : null;
+		$waiting = [];
+		$notReconnected = [];
+		$connected = $at !== null ? $this->vpn->connectedClients() : [];
+		foreach ($this->store->devices() as $d) {
+			if (!$d['enabled']) {
+				continue;
+			}
+			try {
+				$ctx = $this->builder->context($d);
+			} catch (\Throwable $e) {
+				continue;
+			}
+			$client = $ctx['vpn_client'] ?? $ctx['vpn_held'];
+			if ($client === null) {
+				continue;
+			}
+			$row = ['mac' => $d['mac'], 'name' => $d['name'], 'model' => $d['model'], 'vpn_client' => $client, 'repoint_url' => $direct];
+			// After a rebuild: VPN phones whose tunnel hasn't come back 10
+			// minutes on (typically fail2ban banned their IP while they were
+			// still trying the old certificate).
+			if ($at !== null && $now > $at + 600 && $ctx['vpn_client'] !== null && !isset($connected[$client])) {
+				$notReconnected[] = $row + ['last_ip' => $d['last_ip']];
+			}
+			if (!$ctx['tunnel_bound']) {
+				$pushed++;
+				$others[] = $row;
+				continue;
+			}
+			$stranded[] = $row;
+			// Phones handed back after a prepared rebuild get a grace period
+			// to fetch their new profile before they count as cut off.
+			$grace = isset($rebuilt['handed_back'][$d['mac']]) && $now < $at + 900;
+			if ($at !== null && (int) $d['last_seen'] < $at && !$grace) {
+				$waiting[] = $row;
+			}
+		}
+		return ['stranded' => $stranded, 'others' => $others, 'pushed' => $pushed, 'rebuilt_at' => $at, 'waiting' => $waiting,
+			'not_reconnected' => $notReconnected, 'prepare' => $this->vpnRebuildPrepareStatus()];
+	}
+
+	/**
+	 * "Prepare for VPN rebuild": hold the VPN off for every tunnel-bound VPN
+	 * phone, so each provisions from a direct address (LAN, or external_host
+	 * for a phone whose VPN connection comes from a public address) while
+	 * System Admin rebuilds the VPN. The job (vpnRebuildWatch) gives the VPN
+	 * back as soon as it sees the new CA; vpnRebuildFinish() does it at once.
+	 */
+	public function vpnRebuildPrepare(bool $tunnelBoundOnly = false): array
+	{
+		$connected = $this->vpn->connectedClients();
+		$phones = [];
+		$problems = [];
+		$check = $this->vpnRebuildCheck();
+		// All VPN phones by default: a phone still trying its old certificate
+		// against the new CA fails handshake after handshake, and System
+		// Admin's fail2ban "openvpn" jail bans its IP (24 h by default) —
+		// for phones behind one office NAT, the whole site. Held-off phones
+		// never try. tunnelBoundOnly holds just the phones that would be cut off.
+		foreach ($tunnelBoundOnly ? $check['stranded'] : array_merge($check['stranded'], $check['others']) as $r) {
+			$real = preg_replace('/:\d+$/', '', (string) ($connected[$r['vpn_client']]['real'] ?? ''));
+			$public = $real !== '' && filter_var($real, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false;
+			if ($public && $this->settings->get('external_host') === '') {
+				$problems[] = "{$r['mac']} connects from $real (public) but external_host is not set: it would have no address to provision from";
+				continue;
+			}
+			$phones[$r['mac']] = ['network' => $public ? 'external' : 'internal', 'from' => $real];
+		}
+		if ($problems) {
+			throw new \InvalidArgumentException('Not prepared: ' . implode('; ', $problems));
+		}
+		if (!$phones) {
+			return $this->vpnRebuildPrepareStatus() + ['message' => 'No tunnel-bound VPN phones: nothing to prepare. Other VPN phones follow a rebuild by themselves.'];
+		}
+		$st = $this->settings->state('vpn_rebuild');
+		$st['ca'] ??= $this->vpn->caFingerprint(); // the CA to compare against after the rebuild
+		$st['prepare'] = ['started_at' => time(), 'phones' => $phones];
+		$this->settings->setState('vpn_rebuild', $st);
+		$this->syncChanged(); // push the VPN-off configs now, through the still-working tunnels
+		return $this->vpnRebuildPrepareStatus();
+	}
+
+	/** Give the held phones their VPN back now (rebuild done, or cancelled). */
+	public function vpnRebuildFinish(): array
+	{
+		$st = $this->settings->state('vpn_rebuild');
+		$phones = array_keys($st['prepare']['phones'] ?? []);
+		unset($st['prepare']);
+		$this->settings->setState('vpn_rebuild', $st);
+		$res = $phones ? $this->syncChanged() : [];
+		return ['released' => $phones, 'sync' => $res];
+	}
+
+	/**
+	 * {active, started_at, ready, phones: [{mac, network, direct, in_sync, last_ip}]}:
+	 * a phone is ready once it fetched its VPN-off config from a direct
+	 * (non-tunnel) address after the prepare started.
+	 */
+	public function vpnRebuildPrepareStatus(): array
+	{
+		$p = $this->settings->state('vpn_rebuild')['prepare'] ?? null;
+		if (!$p) {
+			return ['active' => false];
+		}
+		$rows = [];
+		$connected = $this->vpn->connectedClients();
+		foreach ($p['phones'] as $mac => $info) {
+			$d = $this->store->deviceByMac($mac);
+			if (!$d) {
+				continue;
+			}
+			$hash = null;
+			$client = null;
+			try {
+				$r = $this->builder->render($d);
+				$hash = $r['hash'];
+				$client = $r['context']['vpn_held'];
+			} catch (\Throwable $e) {
+			}
+			$direct = (int) $d['last_seen'] >= (int) $p['started_at'] && $d['last_ip'] !== '' && !$this->vpn->isTunnelAddress($d['last_ip']);
+			$inSync = $hash !== null && $hash === $d['last_hash'];
+			$tunnelDown = $client === null || !isset($connected[$client]);
+			// Ready: it has the VPN-off config and its tunnel is gone (or it
+			// already provisioned from a direct address).
+			$rows[] = ['mac' => $mac, 'name' => $d['name'], 'network' => $info['network'], 'in_sync' => $inSync,
+				'tunnel_down' => $tunnelDown, 'direct' => $direct, 'ready' => $inSync && ($tunnelDown || $direct), 'last_ip' => $d['last_ip']];
+		}
+		$ready = $rows && !array_filter($rows, fn($r) => !$r['ready']);
+		return ['active' => true, 'started_at' => (int) $p['started_at'], 'ready' => $ready, 'phones' => $rows,
+			'message' => $ready ? 'Ready: every tunnel-bound phone is provisioning directly. Rebuild the VPN in System Admin now; OpenProv gives their VPN back when it sees the new CA.'
+				: 'Waiting for the tunnel-bound phones to fetch their VPN-off config and check in directly.'];
+	}
+
+	/**
+	 * Run by the job: notice a full VPN rebuild (the CA fingerprint changed)
+	 * and keep track of the tunnel-bound phones that haven't fetched since.
+	 * Returns the waiting phones ([] = nothing to report).
+	 */
+	public function vpnRebuildWatch(?int $now = null): array
+	{
+		$fp = $this->vpn->caFingerprint();
+		if ($fp === null) {
+			return []; // no VPN server, or mid-rebuild
+		}
+		$st = $this->settings->state('vpn_rebuild');
+		if (($st['ca'] ?? null) === null) {
+			$this->settings->setState('vpn_rebuild', ['ca' => $fp] + $st); // keep a pending prepare
+			return [];
+		}
+		$now ??= time();
+		if ($st['ca'] !== $fp) {
+			// A full rebuild. Phones held off for it get their VPN back now.
+			$handedBack = array_fill_keys(array_keys($st['prepare']['phones'] ?? []), true);
+			$st = ['ca' => $fp, 'rebuilt_at' => $now] + ($handedBack ? ['handed_back' => $handedBack] : []);
+			$this->settings->setState('vpn_rebuild', $st);
+			if ($handedBack) {
+				$this->afterChange();
+			}
+		}
+		if (!isset($st['rebuilt_at'])) {
+			return [];
+		}
+		$check = $this->vpnRebuildCheck($now);
+		$back = fn($d) => (int) $d['last_seen'] >= $st['rebuilt_at'];
+		$pending = array_filter($check['stranded'], fn($r) => !$back($this->store->deviceByMac($r['mac']) ?? ['last_seen' => 0]));
+		if (!$pending && !$check['not_reconnected'] && $now > $st['rebuilt_at'] + 600) {
+			$this->settings->setState('vpn_rebuild', ['ca' => $fp]); // all back and reconnected: done
+		}
+		return array_merge($check['waiting'], array_map(fn($r) => $r + ['not_reconnected' => true], $check['not_reconnected']));
+	}
+
+	/**
+	 * Phones whose VPN client certificate (or the VPN CA) expires within
+	 * $days: [{mac, name, vpn_client, expires, caExpires, days_left}],
+	 * soonest first. Expired ones are included (days_left <= 0).
+	 */
+	public function vpnExpiring(int $days = 30, ?int $now = null): array
+	{
+		$now ??= time();
+		$clients = $this->vpn->clients();
+		$out = [];
+		foreach ($this->store->devices() as $d) {
+			try {
+				$id = $this->builder->context($d)['vpn_client'];
+			} catch (\Throwable $e) {
+				continue;
+			}
+			$c = $id === null ? null : ($clients[$id] ?? null);
+			if (!$c) {
+				continue;
+			}
+			$when = min(array_filter([$c['expires'] ?? null, $c['caExpires'] ?? null, $c['crlExpires'] ?? null]) ?: [PHP_INT_MAX]);
+			if ($when <= $now + $days * 86400) {
+				$out[] = ['mac' => $d['mac'], 'name' => $d['name'], 'vpn_client' => $id, 'expires' => $c['expires'] ?? null,
+					'caExpires' => $c['caExpires'] ?? null, 'crlExpires' => $c['crlExpires'] ?? null,
+					'days_left' => (int) floor(($when - $now) / 86400)];
+			}
+		}
+		usort($out, fn($a, $b) => $a['days_left'] <=> $b['days_left']);
+		return $out;
 	}
 
 	public function vpnClients(): array
@@ -657,6 +876,11 @@ class Service
 				'keys' => $render['context']['keys'],
 				'network' => $render['context']['network'],
 				'vpn_client' => $render['context']['vpn_client'],
+				'vpn_unavailable' => $render['context']['vpn_unavailable'],
+				'vpn_held' => $render['context']['vpn_held'],
+				'tunnel_bound' => $render['context']['tunnel_bound'],
+				'vpn_cert' => $render['context']['vpn_client'] === null ? null : array_intersect_key(
+					$this->vpn->clients()[$render['context']['vpn_client']] ?? [], ['expires' => 1, 'caExpires' => 1, 'crlExpires' => 1]),
 				'features' => $render['context']['features']['active'],
 				'accounts' => array_map(fn($a) => array_diff_key($a, ['secret' => 1]), $render['context']['accounts']),
 			];
@@ -1353,11 +1577,19 @@ class Service
 				continue;
 			}
 			try {
-				$hash = $this->builder->render($d)['hash'];
+				$render = $this->builder->render($d);
 			} catch (\Throwable $e) {
 				continue;
 			}
+			$hash = $render['hash'];
 			if ($hash === $d['last_hash'] || $hash === $d['notified_hash']) {
+				continue;
+			}
+			if (!empty($render['context']['vpn_unavailable'])) {
+				// Don't push a config whose VPN profile can't be served: the phone
+				// keeps its working tunnel; retried when the files are back.
+				$out[] = ['device' => $d['id'], 'mac' => $d['mac'], 'ok' => false, 'deferred' => true,
+					'message' => 'held: ' . $render['context']['vpn_unavailable']];
 				continue;
 			}
 			if ($dryRun) {

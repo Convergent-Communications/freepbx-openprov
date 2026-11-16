@@ -6,8 +6,12 @@
    "label": "Provisioning network",
    "group": "Provisioning",
    "type": "select",
-   "default": "internal",
+   "default": "auto",
    "options": [
+    {
+     "value": "auto",
+     "label": "Automatic: the public name (external_host) when set, else the internal address"
+    },
     {
      "value": "internal",
      "label": "Internal address"
@@ -22,7 +26,7 @@
     }
    ],
    "computed": true,
-   "help": "Which server address the phone uses for later provisioning requests. 'vpn' keeps provisioning inside the System Admin tunnel."
+   "help": "Which server address the phone uses for later provisioning requests and SIP. Automatic uses external_host (a DNS name) when it is set, so a phone can be moved to another PBX by changing DNS. 'vpn' keeps provisioning inside the System Admin tunnel; tunnel-bound models (T87W) always use it when they have a VPN client."
   },
   {
    "id": "resync_minutes",

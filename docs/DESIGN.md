@@ -288,14 +288,75 @@ Brands are PHP classes behind a `Brand` interface. Only `Yealink` exists today.
 - **Choosing the client:** an explicit choice on the device, otherwise the
   client linked to the device's primary user in User Management (`vpn_client`
   or `vpn_allowed`).
+- **Certificates are System Admin's.** OpenProv never creates or renews them,
+  so their lifetime is whatever System Admin used. On the lab its easy-rsa
+  `pki/vars` holds 730 days for clients, the CA and the CRL, matching Certificate
+  Manager's `CERT_DAYS_VAL` (Advanced Settings).
+- **Rebuilds reach phones.** The profile URL carries `?v=<hash of CA, client
+  cert/key, server address>`. A rebuilt or reissued certificate changes the
+  phone's config, so change detection sends check-sync and the phone downloads
+  the new profile. Tested 2026-11-15 on a T57W: client 5 reissued, old
+  certificate revoked; profile fetched and tunnel back on the new certificate
+  within a second. If a phone should have VPN but its profile can't be built
+  (System Admin's client list or files unreadable, e.g. mid-rebuild), its
+  update is held, not pushed.
+  - **Tunnel-bound phones (T87W) can't follow a full rebuild.** The new CA drops
+    the tunnel they provision through (D8a). Reissue those clients one at a
+    time while their tunnel is up, or repoint them first. OpenProv can't add a
+    warning to System Admin's rebuild button (another module), so it warns on
+    its own side:
+    - *Before:* the Settings tab, each affected phone's page and
+      `vpn.rebuild-check` list the tunnel-bound VPN phones and the direct URL
+      to repoint them to.
+    - *After:* the job keeps the VPN CA's fingerprint. When it changes (a full
+      rebuild), a critical FreePBX notification names each tunnel-bound phone
+      that hasn't fetched since, with the URL to repoint it to, and each VPN
+      phone whose tunnel hasn't come back 10 minutes on. It clears once they
+      have all provisioned again and reconnected.
+  - **Prepare for VPN rebuild** (Settings tab, `vpn.rebuild-prepare`) avoids
+    both problems. Every VPN phone gets a config with VPN held off (a runtime
+    override; the phones' own settings are untouched) and provisions directly:
+    the LAN address, or `external_host` for a phone whose VPN connection comes
+    from a public address. The Settings tab shows when all of them are ready.
+    The admin rebuilds in System Admin; the job sees the new CA and gives the
+    VPN back. The phones fetch their new profiles directly and reconnect.
+    Phones handed back get a 15-minute grace before they count as cut off.
+  - **fail2ban (found 2026-11-15).** A VPN phone that isn't held off keeps
+    retrying its old certificate against the new CA. System Admin's fail2ban
+    `openvpn` jail bans its address after a few failures, for 24 hours by
+    default, and the `recidive` jail notes it too. The phone then gets its new
+    profile but can't connect until it's unbanned (root: `fail2ban-client set
+    openvpn unbanip <ip>`). Behind a shared NAT that's a whole site. That's why
+    prepare holds every VPN phone, not just the tunnel-bound ones
+    (`tunnelBoundOnly` restricts it).
+  - **Tested on the lab, 2026-11-15:** prepare; T87W switched to direct over
+    the LAN in about 1.5 minutes; full rebuild through System Admin's
+    `rebuildCert`; new CA and client certificates (730 days); VPN given back;
+    T87W fetched its new profile directly and its tunnel and SIP over the
+    tunnel came back within about 15 seconds. The T57W, run without prepare
+    (as a non-tunnel-bound phone was then), was banned by fail2ban and
+    reconnected 10 seconds after the unban.
+- **Expiry tracking:** client certificate, CA and CRL `nextUpdate` (the server
+  enforces `crl-verify`, so an expired CRL stops every client). Shown on the
+  phone page, via `vpn.expiring`, and as a FreePBX notification within
+  Certificate Manager's `CERT_DAYS_EXPIRATION_ALERT` (default 30 days).
 - **Remote address:** `vpn.cnf` takes the remote from the System Admin client
   record. The stale second `remote` line that System Admin writes is replaced
   with the external address from OpenProv's settings.
 
 ## D10. Provisioning URL per network
 
-A device has a *provisioning network*: `internal`, `external` or `vpn`. It
-picks the host and port written into `auto_provision.server.url`.
+A device has a *provisioning network*: `auto` (the default), `internal`,
+`external` or `vpn`. It picks the host and port written into
+`auto_provision.server.url`, and the SIP server address.
+
+- **`auto`** is `external` when `external_host` is set, else `internal`. With
+  `external_host` set to the PBX's public DNS name, phones are configured by
+  name, so they can be moved to another PBX by changing DNS. LAN phones then
+  need the name to resolve to an address they can reach (split DNS or NAT
+  hairpinning), or their template set to `internal`. It also lets the PBX use a
+  publicly trusted certificate for that name, which models like the T57W
+  require.
 
 - **`vpn`** uses `vpn_provisioning_host`, or the VPN server's tunnel address
   (for example 10.8.0.1). The phone keeps provisioning through the tunnel after

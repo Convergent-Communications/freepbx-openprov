@@ -185,16 +185,89 @@ class Pbx
 		];
 	}
 
-	/** PJSIP UDP port (sipsettings udpport-0.0.0.0, default 5060). */
-	public function pjsipPort(): int
+	protected ?array $transports = null;
+
+	/**
+	 * PJSIP transports as FreePBX 17 configures them (Settings → Asterisk SIP
+	 * Settings → PJSIP): Sipsettings' "binds" ({proto: {ip: "on"}}) and its
+	 * "<proto>port-<ip>" / "<proto>extport-<ip>" keys, the same data core's
+	 * PJSip driver builds transports from. (The old `sipsettings` table holds
+	 * chan_sip's settings, e.g. bindport, and never these.)
+	 * Returns ["<ip>-<proto>" => {proto, ip, port, extport}].
+	 */
+	public function pjsipTransports(): array
 	{
-		try {
-			$st = $this->db->query("SELECT data FROM sipsettings WHERE keyword = 'udpport-0.0.0.0'");
-			$v = $st ? $st->fetchColumn() : false;
-			return $v ? (int) $v : 5060;
-		} catch (\Throwable $e) {
-			return 5060;
+		if ($this->transports !== null) {
+			return $this->transports;
 		}
+		$get = null;
+		try {
+			if ($this->freepbx) {
+				$ss = $this->freepbx->Sipsettings;
+				$get = fn(string $k) => $ss->getConfig($k);
+			}
+		} catch (\Throwable $e) {
+		}
+		if (!$get) {
+			$get = function (string $k) {
+				try {
+					$st = $this->db->prepare('SELECT val FROM kvstore_Sipsettings WHERE `key` = ? AND id = \'noid\'');
+					$st->execute([$k]);
+					$v = $st->fetchColumn();
+				} catch (\Throwable $e) {
+					return null;
+				}
+				if ($v === false) {
+					return null;
+				}
+				$j = json_decode((string) $v, true);
+				return is_array($j) ? $j : $v;
+			};
+		}
+		$out = [];
+		$binds = $get('binds');
+		foreach (is_array($binds) ? $binds : [] as $proto => $ips) {
+			foreach ((array) $ips as $ip => $on) {
+				if ($on !== 'on') {
+					continue;
+				}
+				$port = (int) $get("{$proto}port-$ip");
+				$out["$ip-$proto"] = [
+					'proto' => (string) $proto,
+					'ip' => (string) $ip,
+					'port' => $port ?: ($proto === 'tls' ? 5061 : 5060),
+					'extport' => (int) trim((string) $get("{$proto}extport-$ip")),
+				];
+			}
+		}
+		return $this->transports = $out;
+	}
+
+	/**
+	 * Port a phone registers to. $extTransport: the extension's own transport
+	 * ("0.0.0.0-udp", from sipAccount()); else the first enabled transport of
+	 * $proto (udp/tcp/tls; 0.0.0.0 preferred), else UDP's. $external: the
+	 * transport's external signaling port when FreePBX has one (NAT).
+	 */
+	public function pjsipPort(string $proto = 'udp', string $extTransport = '', bool $external = false): int
+	{
+		$all = $this->pjsipTransports();
+		$t = $all[$extTransport] ?? null;
+		foreach ([$proto, 'udp'] as $p) {
+			if ($t) {
+				break;
+			}
+			$t = $all["0.0.0.0-$p"] ?? null;
+			foreach ($all as $c) {
+				if (!$t && $c['proto'] === $p) {
+					$t = $c;
+				}
+			}
+		}
+		if (!$t) {
+			return $proto === 'tls' ? 5061 : 5060;
+		}
+		return $external && $t['extport'] > 0 ? $t['extport'] : $t['port'];
 	}
 
 	/**

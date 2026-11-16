@@ -31,9 +31,10 @@ fwconsole openprov trust-key         # as root, once per system: no "unsigned mo
 
 ## Bring a phone online
 
-1. **Add the phone.** In Connectivity → OpenProv Provisioning → Phones, click Add phone and enter the MAC, model, template and extension. Or use `fwconsole openprov device.save --data '{...}'`.
+1. **Add the phone.** In Connectivity → OpenProv → Phones, click Add phone and enter the MAC, model, template and extension. Or use `fwconsole openprov device.save --data '{...}'`.
 2. **Point the phone at the bootstrap URL** and credential from the Settings tab (e.g. `https://pbx/openprov`, or `https://pbx:8449/openprov` with OpenProv's HTTPS service):
    - DHCP option 66: `https://user:pass@pbx/openprov` (same host and port as the bootstrap URL)
+   - Set `external_host` to the PBX's public DNS name and phones are configured by name (provisioning network "auto", the default). To move them to another PBX, change the DNS record.
    - or Yealink RPS
    - or the phone's own Auto Provision page
 

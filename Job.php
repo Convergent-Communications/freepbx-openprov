@@ -13,7 +13,10 @@ class Job implements \FreePBX\Job\TaskInterface
 {
 	public static function run(InputInterface $input, OutputInterface $output)
 	{
-		$svc = \FreePBX::Openprov()->service();
+		$bmo = \FreePBX::Openprov();
+		$svc = $bmo->service();
+		$bmo->vpnExpiryNotice();
+		$bmo->vpnRebuildNotice();
 		foreach ($svc->syncChanged() as $r) {
 			$output->writeln(sprintf('%s %s %s', $r['mac'], $r['ok'] ? 'ok' : ($r['deferred'] ? 'deferred' : 'failed'), $r['message']));
 		}

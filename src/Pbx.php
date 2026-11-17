@@ -453,6 +453,17 @@ class Pbx
 				'module' => $f['module'],
 			];
 		}
+		// Ring groups: dialled like an extension, so a key calls the group and,
+		// with dss_transfer, hands a call to it. FreePBX gives ring groups no
+		// hint, so these are plain speed dials with no status light.
+		foreach ($this->ringGroups() as $g) {
+			$out[] = [
+				'id' => 'rg:' . $g['number'], 'category' => 'ring_group',
+				'label' => $g['number'] . ' ' . $g['name'],
+				'type' => 'speeddial', 'value' => $g['number'], 'perExtension' => false, 'hint' => false,
+				'module' => 'ringgroups',
+			];
+		}
 		// Park slots with hints
 		foreach ($this->hints() as $exten => $ctx) {
 			$exten = (string) $exten;
@@ -462,6 +473,39 @@ class Pbx
 					'type' => 'park_slot', 'value' => $exten, 'perExtension' => false, 'hint' => true, 'module' => 'parking',
 				];
 			}
+		}
+		return $out;
+	}
+
+	/**
+	 * FreePBX ring groups: [['number','name','members']], by number. Empty when
+	 * the ringgroups module isn't installed (no table). `members` is FreePBX's
+	 * grplist split on '-', outside numbers keeping their trailing '#'.
+	 */
+	public function ringGroups(): array
+	{
+		try {
+			$rows = $this->db->query(
+				"SELECT grpnum, description, grplist FROM ringgroups ORDER BY CAST(grpnum AS UNSIGNED), grpnum"
+			)->fetchAll(PDO::FETCH_ASSOC);
+		} catch (\Throwable $e) {
+			return [];
+		}
+		$out = [];
+		foreach ($rows as $r) {
+			$number = trim((string) $r['grpnum']);
+			if (!preg_match('/^\d+$/', $number)) {
+				continue;
+			}
+			$name = trim((string) ($r['description'] ?? ''));
+			$out[] = [
+				'number' => $number,
+				'name' => $name !== '' ? $name : 'Ring group ' . $number,
+				'members' => array_values(array_filter(
+					preg_split('/[-\s]+/', (string) ($r['grplist'] ?? '')),
+					fn($m) => preg_match('/^\d+#?$/', $m) === 1
+				)),
+			];
 		}
 		return $out;
 	}

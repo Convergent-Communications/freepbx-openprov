@@ -27,7 +27,7 @@ arguments can be JSON (`devices='["c4fc22a1b2c3"]'`).
 | `models` | `brand?` | Phone model catalog (`models/<brand>/*.json`) |
 | `schema` | `brand?` | Template/device settings and their Yealink keys |
 | `keytypes` | `brand?` | Semantic key types (`blf`, `speeddial`, `feature`, ...) |
-| `targets` | | Extensions, feature codes, park slots and toggles a key can point at. Includes `category` and `hint` (whether the BLF light works) for pickers and **permission gating** |
+| `targets` | | Extensions, feature codes, park slots, ring groups (`category: ring_group`, speed dial, no hint) and toggles a key can point at. Includes `category` and `hint` (whether the BLF light works) for pickers and **permission gating** |
 | `extensions` | | PBX extensions with display names |
 | `vpn.clients` | | System Admin OpenVPN clients |
 | `templates.list` / `template.get` / `template.save` / `template.copy` / `template.delete` | | `template.save`: `{id?, name, parent?, description?, settings?, raw?, keys?}` |

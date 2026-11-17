@@ -377,6 +377,11 @@ class ConfigBuilder
 		foreach ($this->pbx->featureCodes() as $f) {
 			$featureNames[$f['code']] = preg_replace('/^\d+:\s*/', '', preg_replace('/\s*\(temp\)$/', '', $f['description']));
 		}
+		// A key dialling a ring group is labelled with the group's description.
+		$ringGroupNames = [];
+		foreach ($this->pbx->ringGroups() as $g) {
+			$ringGroupNames[$g['number']] = $g['name'];
+		}
 		$accountLabels = [];
 		foreach ($accounts as $a) {
 			$accountLabels[$a['account']] = $a['label'];
@@ -394,6 +399,8 @@ class ConfigBuilder
 						$label = Util::label($labelFormat, $value, $np['name'], $np['first'], $np['last']);
 					} elseif (isset($featureNames[$value])) {
 						$label = $featureNames[$value];
+					} elseif (isset($ringGroupNames[$value]) && $k['type'] !== 'line') {
+						$label = $ringGroupNames[$value];
 					} elseif ($k['type'] === 'park_slot') {
 						$label = 'Park ' . $value;
 					} else {

@@ -89,6 +89,14 @@ class FakePbx extends Pbx
 		return ['uid' => $this->userman[$ext]['uid'], 'updated' => array_keys($fields)];
 	}
 
+	/** FreePBX ring groups, as Pbx::ringGroups() returns them. */
+	public array $rings = [];
+
+	public function ringGroups(): array
+	{
+		return $this->rings;
+	}
+
 	public array $users = [
 		'201' => 'Alice Smith',
 		'202' => 'Bob Jones',
@@ -358,6 +366,23 @@ $tests['service: device validation'] = function () {
 	eq('********', $d['prov_pass']);
 	$other = $w->svc->saveDevice(['mac' => 'aa:bb:cc:dd:ee:ff', 'model' => 'T87W']);
 	throws(fn() => $w->svc->saveDevice(['id' => $other['id'], 'mac' => MAC]), 'already');
+};
+
+$tests['render: a speed dial to a ring group is labelled with its name unless given one'] = function () {
+	$w = world();
+	phone($w);
+	$w->pbx->rings = [['number' => '600', 'name' => 'Sales', 'members' => ['201', '202']]];
+	$w->svc->setKeys('device', MAC, [
+		['position' => 2, 'type' => 'speeddial', 'value' => '600'],
+		['position' => 3, 'type' => 'speeddial', 'value' => '600', 'label' => 'Sales team'],
+		['position' => 4, 'type' => 'speeddial', 'value' => '601'],
+	]);
+	$kv = kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+	eq('13', $kv['linekey.2.type']);
+	eq('600', $kv['linekey.2.value']);
+	eq('Sales', $kv['linekey.2.label']);
+	eq('Sales team', $kv['linekey.3.label']);
+	eq('601', $kv['linekey.4.label'], 'not a ring group: the number');
 };
 
 $tests['render: accounts, labels, keys, %NULL% clearing'] = function () {
@@ -1389,6 +1414,28 @@ $tests['pbx: PJSIP transports are read from Sipsettings (kvstore), not chan_sip\
 	eq(5061, $pbx->pjsipPort('tls'));
 	eq(5160, $pbx->pjsipPort('tls', '198.51.100.7-udp'), 'the extension\'s own transport wins');
 	eq(5060, (new Pbx(new PDO('sqlite::memory:'), null))->pjsipPort(), 'no FreePBX data: 5060');
+};
+
+$tests['pbx: ring groups are key targets (speed dial, no status light); no ringgroups table = none'] = function () {
+	$db = new PDO('sqlite::memory:');
+	$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+	$db->exec('CREATE TABLE users (extension TEXT, name TEXT)');
+	$db->exec('CREATE TABLE devices (id TEXT, tech TEXT)');
+	$db->exec('CREATE TABLE featurecodes (modulename TEXT, featurename TEXT, description TEXT, defaultcode TEXT, customcode TEXT, enabled INTEGER)');
+	$db->exec("INSERT INTO users VALUES ('201', 'Front Desk')");
+	eq([], (new Pbx($db, null))->ringGroups(), 'no ringgroups module');
+	eq(0, count(array_filter((new Pbx($db, null))->keyTargets(), fn($t) => $t['category'] === 'ring_group')));
+
+	$db->exec('CREATE TABLE ringgroups (grpnum TEXT, description TEXT, grplist TEXT)');
+	$db->exec("INSERT INTO ringgroups VALUES ('6000', '', '201'), ('600', 'Sales', '201-202-5551234#'), ('x1', 'Bad', '201')");
+	$pbx = new Pbx($db, null);
+	eq([
+		['number' => '600', 'name' => 'Sales', 'members' => ['201', '202', '5551234#']],
+		['number' => '6000', 'name' => 'Ring group 6000', 'members' => ['201']],
+	], $pbx->ringGroups());
+	$rg = array_values(array_filter($pbx->keyTargets(), fn($t) => $t['category'] === 'ring_group'));
+	eq(2, count($rg));
+	eq(['id' => 'rg:600', 'category' => 'ring_group', 'label' => '600 Sales', 'type' => 'speeddial', 'value' => '600', 'perExtension' => false, 'hint' => false, 'module' => 'ringgroups'], $rg[0]);
 };
 
 // ---- HTTPS: FreePBX's own, else OpenProv's service ------------------------------

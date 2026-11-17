@@ -934,6 +934,9 @@ $tests['dashboard policy: remote callers change only what OpenProv allows'] = fu
 	eq('60', $d['settings']['backlight_time']);
 	eq('off', $d['settings']['vpn'], 'other settings untouched by a dashboard save');
 	eq(['backlight_time', 'label_length'], array_column($r->call('dashboard.policy', [])['settings'], 'id'));
+	// email never, even with user details on (Sangoma app login, password resets)
+	throws(fn() => $r->call('extension.update', ['extension' => '212', 'email' => 'x@example.com']), 'email');
+	throws(fn() => $r->call('extension.update', ['extension' => '212', 'fname' => 'Rob', 'email' => '']), 'email');
 	// renames / user details follow their switches; master switch stops everything
 	$w->settings->set('dashboard_user_details', false);
 	throws(fn() => $r->call('extension.update', ['extension' => '212', 'fname' => 'Rob']), 'User Management');

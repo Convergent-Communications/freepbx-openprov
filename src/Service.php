@@ -8,7 +8,7 @@ namespace FreePBX\modules\Openprov;
  */
 class Service
 {
-	public const VERSION = '0.2.4';
+	public const VERSION = '0.2.5';
 	private bool $deferSync = false;
 
 	public function __construct(
@@ -658,7 +658,13 @@ class Service
 				if (isset($a['name']) && !$p['rename_extensions']) {
 					$deny('renaming extensions');
 				}
-				if (array_intersect(array_keys($a), ['fname', 'lname', 'displayname', 'email']) && !$p['edit_user_details']) {
+				// Never email: it is the user's login for Sangoma's apps (changing it
+				// signs them out) and where UCP sends password resets, so a remote
+				// caller changing it could take over the account. Admins only.
+				if (array_key_exists('email', $a)) {
+					$deny('changing a user\'s email');
+				}
+				if (array_intersect(array_keys($a), ['fname', 'lname', 'displayname']) && !$p['edit_user_details']) {
 					$deny('editing User Management details');
 				}
 				return $a;

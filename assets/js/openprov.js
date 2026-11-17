@@ -1207,7 +1207,7 @@
 			<div class="card mb-3"><div class="card-body">
 				<h5 class="card-title">2. Names</h5>
 				${check('rename', '1', state.rename, '<strong>Rename extensions</strong>', 'The name shown on phones, in caller ID and on voicemail.')}
-				${check('user', '1', state.user, '<strong>Edit people\'s details</strong>', 'First name, last name, display name and email in User Management.')}
+				${check('user', '1', state.user, '<strong>Edit people\'s details</strong>', 'First name, last name and display name in User Management. Never email: it is the Sangoma app login and where password resets go.')}
 			</div></div>
 
 			<div class="card mb-3"><div class="card-body">

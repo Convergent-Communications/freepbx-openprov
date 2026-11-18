@@ -617,6 +617,24 @@
    }
   },
   {
+   "id": "dnd_on_code",
+   "label": "DND on code",
+   "group": "Features",
+   "type": "text",
+   "computed": true,
+   "blankLabel": "FreePBX's DND on code",
+   "help": "Dialled to FreePBX when someone turns on Do Not Disturb at the phone, for each account, so FreePBX (and the dashboard) know: calls to that extension's other phones and Follow Me stop too. Blank: FreePBX's own code (*78 unless renumbered). 'off': the phone's own DND only, FreePBX is not told. DND set elsewhere (dashboard, UCP, a dialled *78) does not light the phone's DND icon; a DND toggle key (*76) does."
+  },
+  {
+   "id": "dnd_off_code",
+   "label": "DND off code",
+   "group": "Features",
+   "type": "text",
+   "computed": true,
+   "blankLabel": "FreePBX's DND off code",
+   "help": "Dialled when DND is turned off at the phone. Blank: FreePBX's own code (*79 unless renumbered). 'off' (on either code): the phone's own DND only."
+  },
+  {
    "id": "missed_call_popup",
    "label": "Missed-call pop-up",
    "group": "Features",

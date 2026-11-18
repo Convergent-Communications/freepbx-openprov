@@ -165,6 +165,25 @@ class Yealink implements Brand
 			}
 		}
 
+		// DND at the phone tells FreePBX: per account (features.dnd_mode = 1,
+		// "Custom"), each account dials the on / off code, so FreePBX sets DND
+		// on that account's extension. Measured on the T87W (185.87.0.42,
+		// 2026-11-18): account.N.dnd.on_code / off_code with dnd_mode 1. The
+		// phone sends them when DND is toggled at the phone, not when its web
+		// UI changes the status. 'off' clears them (phone-local DND only),
+		// including the phone-wide codes an earlier provisioner may have left.
+		if (array_key_exists('dnd', $ctx)) {
+			$codes = $ctx['dnd'];
+			$b['features.dnd_mode'] = $codes ? '1' : '0';
+			$b['features.dnd.on_code'] = '';
+			$b['features.dnd.off_code'] = '';
+			foreach ($ctx['accounts'] as $a) {
+				$n = (int) $a['account'];
+				$b["account.$n.dnd.on_code"] = $codes['on'] ?? '';
+				$b["account.$n.dnd.off_code"] = $codes['off'] ?? '';
+			}
+		}
+
 		// Line keys and expansion modules
 		$this->compileKeys($b, $ctx['keys']['line'] ?? [], (int) $model['lineKeys'], $ctx['manage_keys'], fn($n) => "linekey.$n");
 		$exp = $model['expansion'] ?? null;

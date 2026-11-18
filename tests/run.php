@@ -133,13 +133,18 @@ class FakePbx extends Pbx
 		return 'America/New_York';
 	}
 
+	/** FreePBX's DND on code; '' = renumbered away (no DND codes). */
+	public string $dndOn = '*78';
+
 	public function featureCodes(): array
 	{
-		return [
+		return array_values(array_filter([
 			['module' => 'timeconditions', 'feature' => 'toggle-mode-1', 'description' => '1: Main hours (temp)', 'code' => '*271'],
 			['module' => 'findmefollow', 'feature' => 'fmf_toggle', 'description' => 'Findme Follow Toggle', 'code' => '*21'],
 			['module' => 'core', 'feature' => 'atxfer', 'description' => 'In-Call Attended Transfer', 'code' => '*2'],
-		];
+			['module' => 'donotdisturb', 'feature' => 'dnd_on', 'description' => 'DND Activate', 'code' => $this->dndOn],
+			['module' => 'donotdisturb', 'feature' => 'dnd_off', 'description' => 'DND Deactivate', 'code' => '*79'],
+		], fn($f) => $f['code'] !== ''));
 	}
 
 	public function hints(): array
@@ -1347,6 +1352,32 @@ $tests['screenshot: redirects are followed only on the same phone over HTTPS'] =
 	eq(null, $f('https://10.8.0.5:8443/screencapture'), 'another port');
 	eq(null, $f(''), 'no Location');
 	eq('/x', $f('https://[fd00::5]/x', '[fd00::5]'), 'IPv6');
+};
+
+$tests['render: DND at the phone dials FreePBX\'s codes per account; custom codes; off clears them'] = function () {
+	$render = function (array $settings, string $pbxOn = '*78') {
+		$w = world();
+		$w->pbx->dndOn = $pbxOn;
+		phone($w, ['settings' => $settings]);
+		return kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+	};
+	$kv = $render([]);
+	eq('1', $kv['features.dnd_mode'], 'per account');
+	eq('*78', $kv['account.1.dnd.on_code'], "FreePBX's code by default");
+	eq('*79', $kv['account.1.dnd.off_code']);
+	eq('', $kv['features.dnd.on_code'], 'phone-wide leftovers cleared');
+
+	$kv = $render(['dnd_on_code' => '*90', 'dnd_off_code' => '*91']);
+	eq('*90', $kv['account.1.dnd.on_code']);
+	eq('*91', $kv['account.1.dnd.off_code']);
+
+	$kv = $render(['dnd_on_code' => 'OFF']);
+	eq('0', $kv['features.dnd_mode'], 'phone-local DND only');
+	eq('', $kv['account.1.dnd.on_code']);
+
+	eq('0', $render([], '')['features.dnd_mode'], 'FreePBX without DND codes: phone-local');
+
+	throws(fn() => $render(['dnd_on_code' => '*78; reboot']), 'feature code');
 };
 
 $tests['render: firmware goes only to the models it is for'] = function () {

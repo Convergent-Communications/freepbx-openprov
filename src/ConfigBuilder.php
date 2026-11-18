@@ -510,6 +510,7 @@ class ConfigBuilder
 			'timezone' => $this->yealinkTimezone((string) ($s['timezone'] ?? '')),
 			'multicast' => $multicast,
 			'resync_minutes' => (int) ($s['resync_minutes'] ?? 1440),
+			'dnd' => $this->dndCodes($s),
 			'manage_keys' => ($s['manage_keys'] ?? '1') === '1',
 			'screenshot_from' => ($s['remote_screenshot'] ?? '1') === '1' ? $this->pbxSourceAddresses() : [],
 			'features' => $this->featureLines($s, $model, $keys, $device, $primaryExt, $this->hostFor($network)),
@@ -660,6 +661,33 @@ class ConfigBuilder
 			}
 		}
 		return array_slice($rows, 0, 10);
+	}
+
+	/**
+	 * DND codes the phone dials when DND is turned on / off at the phone, so
+	 * FreePBX's DND follows: the settings, or FreePBX's own codes
+	 * (donotdisturb dnd_on / dnd_off) when blank. ['on' => .., 'off' => ..],
+	 * or null when DND stays on the phone only ('off', or FreePBX has no DND
+	 * codes).
+	 */
+	public function dndCodes(array $s): ?array
+	{
+		$on = trim((string) ($s['dnd_on_code'] ?? ''));
+		$off = trim((string) ($s['dnd_off_code'] ?? ''));
+		if ($on === 'off' || $off === 'off') {
+			return null;
+		}
+		if ($on === '' || $off === '') {
+			$pbx = [];
+			foreach ($this->pbx->featureCodes() as $f) {
+				if ($f['module'] === 'donotdisturb') {
+					$pbx[$f['feature']] = $f['code'];
+				}
+			}
+			$on = $on !== '' ? $on : (string) ($pbx['dnd_on'] ?? '');
+			$off = $off !== '' ? $off : (string) ($pbx['dnd_off'] ?? '');
+		}
+		return $on !== '' && $off !== '' ? ['on' => $on, 'off' => $off] : null;
 	}
 
 	/** Schema-mapped (non-computed) settings → vendor keys. */

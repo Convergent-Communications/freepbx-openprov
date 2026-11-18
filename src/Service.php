@@ -8,7 +8,7 @@ namespace FreePBX\modules\Openprov;
  */
 class Service
 {
-	public const VERSION = '0.3.0';
+	public const VERSION = '0.3.1';
 	private bool $deferSync = false;
 
 	public function __construct(
@@ -2083,6 +2083,12 @@ class Service
 					new \DateTimeZone($v);
 				} catch (\Throwable $e) {
 					throw new \InvalidArgumentException("Unknown time zone '$v'");
+				}
+			}
+			if (in_array($k, ['dnd_on_code', 'dnd_off_code'], true)) {
+				$v = strtolower(trim($v)) === 'off' ? 'off' : trim($v);
+				if ($v !== 'off' && !preg_match('/^[*#0-9]{1,16}$/', $v)) {
+					throw new \InvalidArgumentException("'$k' must be a feature code such as *78, or 'off'");
 				}
 			}
 			if (in_array($k, ['admin_password', 'user_password'], true) && strtolower($v) === 'admin') {

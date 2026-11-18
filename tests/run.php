@@ -1339,6 +1339,16 @@ $tests['vpn: prepare for a rebuild holds tunnel-bound phones off the VPN, and gi
 	eq('1', $cfg()['static.network.vpn_enable']);
 };
 
+$tests['screenshot: redirects are followed only on the same phone over HTTPS'] = function () {
+	$f = fn($loc, $host = '10.8.0.5') => Service::samePhonePath($loc, $host);
+	eq('/servlet?m=mod_action&command=screenshot', $f('https://10.8.0.5/servlet?m=mod_action&command=screenshot'), 'T48S: same phone');
+	eq(null, $f('http://10.8.0.5/servlet?m=mod_action&command=screenshot'), 'plain HTTP: the password is not sent');
+	eq(null, $f('https://evil.example/screencapture'), 'another host');
+	eq(null, $f('https://10.8.0.5:8443/screencapture'), 'another port');
+	eq(null, $f(''), 'no Location');
+	eq('/x', $f('https://[fd00::5]/x', '[fd00::5]'), 'IPv6');
+};
+
 $tests['render: firmware goes only to the models it is for'] = function () {
 	eq(true, ConfigBuilder::firmwareFits(['name' => 'T77_T73_T74_T73U_T74U_T77U_T85W_T87W_-185.87.0.42.rom'], 'T87W'));
 	eq(false, ConfigBuilder::firmwareFits(['name' => 'T77_T73_T74_T73U_T74U_T77U_T85W_T87W_-185.87.0.42.rom'], 'T57W'));

@@ -8,7 +8,7 @@ namespace FreePBX\modules\Openprov;
  */
 class Service
 {
-	public const VERSION = '0.2.5';
+	public const VERSION = '0.3.0';
 	private bool $deferSync = false;
 
 	public function __construct(
@@ -1341,21 +1341,33 @@ class Service
 				$errors[] = $e->getMessage();
 				continue;
 			}
-			$ch = curl_init("https://$hostPart/screencapture");
-			curl_setopt_array($ch, PhoneClient::curlPin($pin) + [
-				CURLOPT_RETURNTRANSFER => true,
-				CURLOPT_HTTPAUTH => CURLAUTH_BASIC,
-				CURLOPT_USERPWD => 'admin:' . $ctx['passwords']['admin'],
-				CURLOPT_SSL_VERIFYPEER => false, // phones use their factory certificate
-				CURLOPT_SSL_VERIFYHOST => 0,
-				CURLOPT_CONNECTTIMEOUT => 5,
-				CURLOPT_TIMEOUT => 20,
-			]);
-			$body = curl_exec($ch);
-			$code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-			$type = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
-			$err = curl_error($ch);
-			curl_close($ch);
+			// Older firmware (T4xS 66.x) answers /screencapture with a redirect to
+			// /servlet?m=mod_action&command=screenshot. Follow redirects only on
+			// the same phone over HTTPS (same pin and password), never elsewhere.
+			$path = '/screencapture';
+			for ($hop = 0; ; $hop++) {
+				$ch = curl_init("https://$hostPart$path");
+				curl_setopt_array($ch, PhoneClient::curlPin($pin) + [
+					CURLOPT_RETURNTRANSFER => true,
+					CURLOPT_HTTPAUTH => CURLAUTH_BASIC,
+					CURLOPT_USERPWD => 'admin:' . $ctx['passwords']['admin'],
+					CURLOPT_SSL_VERIFYPEER => false, // phones use their factory certificate
+					CURLOPT_SSL_VERIFYHOST => 0,
+					CURLOPT_CONNECTTIMEOUT => 5,
+					CURLOPT_TIMEOUT => 20,
+				]);
+				$body = curl_exec($ch);
+				$code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+				$type = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+				$location = (string) curl_getinfo($ch, CURLINFO_REDIRECT_URL);
+				$err = curl_error($ch);
+				curl_close($ch);
+				$next = ($body !== false && $code >= 300 && $code < 400 && $hop < 3) ? self::samePhonePath($location, $hostPart) : null;
+				if ($next === null) {
+					break;
+				}
+				$path = $next;
+			}
 			if ($body === false) {
 				$errors[] = "$h: $err";
 				continue;
@@ -1366,9 +1378,31 @@ class Service
 			}
 			$errors[] = "$h: HTTP $code" . ($code === 404 || $code === 403 || $code === 412
 				? ' (the phone refused: it needs this config with "Allow screenshots from the PBX" on; update the phone first)'
-				: ($code === 401 ? ' (admin password rejected)' : ($type !== '' ? " ($type)" : '')));
+				: ($code === 401 ? ' (admin password rejected)'
+				: ($code >= 300 && $code < 400 ? ' (redirected off the phone or over plain HTTP: not followed)' : ($type !== '' ? " ($type)" : ''))));
 		}
 		throw new \RuntimeException('Screenshot failed: ' . implode('; ', $errors));
+	}
+
+	/**
+	 * The path of a redirect that stays on the same phone over HTTPS, or null
+	 * (another host, another scheme or port: the password is not sent there).
+	 */
+	public static function samePhonePath(string $location, string $hostPart): ?string
+	{
+		if ($location === '') {
+			return null;
+		}
+		$u = parse_url($location);
+		if ($u === false || ($u['scheme'] ?? 'https') !== 'https' || isset($u['port']) || isset($u['user'])
+			|| (strcasecmp((string) ($u['host'] ?? ''), trim($hostPart, '[]')) !== 0 && strcasecmp((string) ($u['host'] ?? ''), $hostPart) !== 0)) {
+			return null;
+		}
+		$path = (string) ($u['path'] ?? '');
+		if ($path === '' || $path[0] !== '/') {
+			return null;
+		}
+		return $path . (isset($u['query']) ? '?' . $u['query'] : '');
 	}
 
 	private function imageMime(string $b): ?string

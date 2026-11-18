@@ -41,3 +41,10 @@ $web = $info['web'];
 	</div>
 	</div>
 </div>
+<?php
+// The admin page's own stylesheet and script are inlined, not linked: the
+// module directory is closed to the web (.htaccess), so nothing of OpenProv's
+// can be fetched without a FreePBX admin session.
+?>
+<style><?= str_ireplace('</style', '<\/style', (string) file_get_contents(__DIR__ . '/openprov.css')) ?></style>
+<script><?= str_ireplace('</script', '<\/script', (string) file_get_contents(__DIR__ . '/openprov.js')) ?></script>

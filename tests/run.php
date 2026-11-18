@@ -10,7 +10,7 @@ declare(strict_types=1);
 
 namespace FreePBX\modules\Openprov\Tests;
 
-use FreePBX\modules\Openprov\{Assets, Catalog, ConfigBuilder, Notifier, Pbx, ProvisionServer, Service, Settings, Store, Tar, TlsService, Util, Vpn, Web};
+use FreePBX\modules\Openprov\{Assets, Catalog, ConfigBuilder, Exchange, Notifier, Pbx, ProvisionServer, Service, Settings, Store, Tar, TlsService, Util, Vpn, Web};
 use FreePBX\modules\Openprov\Brand\Yealink;
 use PDO;
 
@@ -1186,13 +1186,14 @@ $tests['web: no code writes Apache config, adds Listen or enables sites'] = func
 $tests['server: plain HTTP is refused unless phone_scheme is http; URLs carry /openprov'] = function () {
 	$w = world();
 	phone($w);
-	eq(403, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', 'boot', 'bootpass', false)['status'], 'HTTP refused with https scheme');
+	eq(403, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.168.1.50', 'boot', 'bootpass', false, 80)['status'], 'HTTP refused with https scheme (LAN)');
 	eq(200, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', 'boot', 'bootpass', true)['status']);
 	$w->settings->set('https_port', 8444);
 	eq('https://192.0.2.10:8444/openprov', $w->builder->baseUrl('internal'));
 	$w->settings->set('phone_scheme', 'http');
 	eq('http://192.0.2.10/openprov', $w->builder->baseUrl('internal'), 'port 80 is implicit');
-	ok($w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', 'boot', 'bootpass', false)['status'] !== 403, 'HTTP allowed with http scheme');
+	ok(!in_array($w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.168.1.50', 'boot', 'bootpass', false, 80)['status'], [403, 404], true), 'HTTP allowed with http scheme (LAN)');
+	eq(404, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '192.0.2.50', 'boot', 'bootpass', false, 80)['status'], 'never plain HTTP from the internet');
 	throws(fn() => $w->settings->set('http_port', 0), 'TCP port');
 	throws(fn() => $w->settings->set('service_port', 443), '1025');
 	throws(fn() => $w->settings->set('https_mode', 'apache'), 'auto, freepbx or service');
@@ -1560,6 +1561,236 @@ $tests['https: freepbx mode without HTTPS says how to fix it; http scheme uses h
 	$f = httpsFixture(['https://127.0.0.1:443', 'http://127.0.0.1:80', 'https://127.0.0.1:8449']);
 	$f->settings->set('https_mode', 'service');
 	eq('service', $f->web->resolve()['mode'], 'forced service even though 443 exists');
+};
+
+// ---- internet exposure ------------------------------------------------------------
+
+$tests['server: internet addresses only over HTTPS on internet_ports (443); LAN and VPN on any port'] = function () {
+	$w = world();
+	phone($w);
+	$h = fn(string $ip, bool $secure, int $port) => $w->server->handle('/c4fc22a1b2c3.cfg', UA, $ip, 'boot', 'bootpass', $secure, $port);
+	foreach ([[true, 8449], [true, 1443], [true, 0], [false, 443], [false, 80]] as [$secure, $port]) {
+		$r = $h('203.0.113.9', $secure, $port);
+		eq(404, $r['status'], "internet, port $port, " . ($secure ? 'HTTPS' : 'HTTP'));
+		eq('', $r['body'], 'says nothing');
+		ok(!isset($r['headers']['WWW-Authenticate']), 'no credential prompt');
+	}
+	eq(401, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '203.0.113.9', null, null, true, 443)['status'], 'internet on 443: the normal credential prompt');
+	eq(200, $h('203.0.113.9', true, 443)['status'], 'internet on 443 with credentials');
+	foreach (['192.168.1.50', '10.8.0.5', '172.20.1.1', '100.64.3.4', '127.0.0.1', 'fd00::5', '::ffff:192.168.1.9'] as $ip) {
+		$w->store->saveDevice(['claimable' => true] + $w->store->deviceByMac(MAC));
+		eq(200, $h($ip, true, 8449)['status'], "$ip on OpenProv's HTTPS service port");
+	}
+	ok(!Util::isPrivateIp('::ffff:203.0.113.9') && !Util::isPrivateIp('2001:db8::1') && !Util::isPrivateIp('8.8.8.8') && !Util::isPrivateIp('garbage'), 'public / invalid');
+	// Assets and VPN profiles go through the same gate.
+	eq(404, $w->server->handle('/a/firmware/1/x.rom', UA, '203.0.113.9', MAC, 'x', true, 8449)['status']);
+	eq(404, $w->server->handle('/c4fc22a1b2c3-vpn.tar', UA, '203.0.113.9', MAC, 'x', true, 8449)['status']);
+	// internet_ports: blank = LAN/VPN only; a forwarded port can be added.
+	$w->settings->set('internet_ports', '');
+	eq(404, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '203.0.113.9', null, null, true, 443)['status'], 'blank: not even 443');
+	$w->settings->set('internet_ports', '443, 8449 443');
+	eq('443,8449', $w->settings->get('internet_ports'));
+	eq(401, $w->server->handle('/c4fc22a1b2c3.cfg', UA, '203.0.113.9', null, null, true, 8449)['status']);
+	throws(fn() => $w->settings->set('internet_ports', '443,https'), 'not a TCP port');
+	throws(fn() => $w->settings->set('internet_ports', '70000'), 'not a TCP port');
+};
+
+$tests['web: /_ping needs OpenProv\'s token; the module directory is closed; the GUI inlines its script'] = function () {
+	$root = dirname(__DIR__);
+	$index = (string) file_get_contents("$root/htdocs/index.php");
+	ok(str_contains($index, 'Web::pingToken($openprov->proxySecret())') && str_contains($index, 'HTTP_X_OPENPROV_PING'), 'index.php checks the ping token');
+	ok(strpos($index, 'pingToken') < strpos($index, 'PING_BODY;'), 'before answering');
+	eq(64, strlen(Web::pingToken('s')));
+	ok(Web::pingToken('a') !== Web::pingToken('b'));
+	ok(str_contains((string) file_get_contents("$root/src/Web.php"), "self::PING_HEADER . ': ' . self::pingToken("), 'the probe sends it');
+	$tls = (string) file_get_contents("$root/node/tls-service.js");
+	ok(str_contains($tls, "headers['x-openprov-port'] = String(req.socket.localPort"), 'the HTTPS service names its port');
+	ok(str_contains($tls, "['x-forwarded-for', 'x-openprov-proxy', 'x-openprov-port'].includes(k)"), 'clients cannot supply proxy headers');
+	$ht = (string) file_get_contents("$root/.htaccess");
+	ok(str_contains($ht, 'Require all denied') && str_contains($ht, 'RewriteRule ^ - [F]') && str_contains($ht, '<FilesMatch ".*">'), 'module .htaccess denies everything');
+	ok(!is_dir("$root/assets"), 'no assets/ directory for FreePBX to link');
+	$view = (string) file_get_contents("$root/views/main.php");
+	ok(str_contains($view, "file_get_contents(__DIR__ . '/openprov.js')") && str_contains($view, "file_get_contents(__DIR__ . '/openprov.css')"), 'the view inlines the script and stylesheet');
+};
+
+// ---- export / import -----------------------------------------------------------------
+
+function exchangeWorld(): object
+{
+	$w = world();
+	$w->svc->saveFeature(['id' => 'captions', 'name' => 'Live captions', 'kind' => 'softkey_url', 'button_label' => 'Captions', 'url' => 'http://{pbx}:8080/captions/{ext}', 'states' => ['on_talk']]);
+	$wav = tempnam(sys_get_temp_dir(), 'wav');
+	file_put_contents($wav, "RIFF\x24\x00\x00\x00WAVEfmt " . str_repeat("\x01", 24));
+	$ring = $w->svc->addAsset('ringtone', 'Chime.wav', $wav);
+	$rom = tempnam(sys_get_temp_dir(), 'fw');
+	file_put_contents($rom, str_repeat('F', 100));
+	$fw = $w->svc->addAsset('firmware', 'T87W-185.87.0.42.rom', $rom);
+	$base = $w->svc->saveTemplate(['name' => 'Base', 'settings' => ['label_format' => '{first}', 'ringtone' => 'asset:' . $ring['id'], 'firmware' => (string) $fw['id']],
+		'keys' => [['position' => 1, 'type' => 'line', 'account' => 1]]]);
+	$sales = $w->svc->saveTemplate(['name' => 'Sales', 'parent' => $base['id'], 'settings' => ['distinctive_ring' => "Sales=asset:{$ring['id']}", 'feature.captions' => '1']]);
+	$w->svc->saveDevice(['mac' => 'C4:FC:22:A1:B2:C3', 'model' => 'T87W', 'template' => $sales['id'], 'name' => 'Front desk',
+		'lines' => [['account' => 1, 'extension' => '212']], 'settings' => ['vpn' => '6'],
+		'keys' => [['position' => 3, 'type' => 'blf', 'value' => '201', 'label' => 'Alice']]]);
+	$w->svc->saveDevice(['mac' => '805ec0aabbcc', 'model' => 'T57W', 'lines' => [['account' => 1, 'extension' => '201']], 'template' => null]);
+	$w->settings->set('default_template_id', $base['id']);
+	$w->settings->set('external_host', 'pbx.example.com');
+	$w->settings->set('dashboard_rename', false);
+	return $w;
+}
+
+$tests['exchange: export leaves out this machine\'s settings, passwords and firmware unless asked'] = function () {
+	$w = exchangeWorld();
+	$doc = json_decode(json_encode($w->svc->exportConfig()), true);
+	eq(1, $doc['openprov_export']);
+	eq(['secrets' => false, 'firmware' => false], $doc['includes']);
+	foreach (array_merge(Exchange::MACHINE_SETTINGS, Exchange::SECRET_SETTINGS) as $k) {
+		ok(!array_key_exists($k, $doc['settings']), "no $k");
+	}
+	eq('Base', $doc['settings']['default_template_id'], 'template ids as names');
+	eq(['Base', 'Sales'], array_column($doc['templates'], 'name'));
+	eq('Base', $doc['templates'][1]['parent']);
+	$dev = array_column($doc['devices'], null, 'mac')[MAC];
+	eq('Sales', $dev['template']);
+	ok(!isset($dev['credentials']), 'no provisioning credentials');
+	eq('212', $dev['lines'][0]['extension']);
+	eq('blf', $dev['keys'][0]['type']);
+	eq(['captions'], array_column($doc['features'], 'id'));
+	$byKind = array_column($doc['assets'], null, 'kind');
+	ok(str_starts_with(base64_decode($byKind['ringtone']['data']), 'RIFF'), 'ringtone included');
+	eq(null, $byKind['firmware']['data'], 'firmware left out');
+	eq(['T87W-185.87.0.42.rom'], $doc['firmware_not_included']);
+	ok(!str_contains(json_encode($doc), 'bootpass') && !str_contains(json_encode($doc), '24681357'), 'no secret anywhere');
+
+	$all = $w->svc->exportConfig(['secrets' => true, 'firmware' => true]);
+	eq('bootpass', $all['settings']['bootstrap_pass']);
+	$cred = array_column($all['devices'], null, 'mac')[MAC]['credentials'];
+	eq(MAC, $cred['prov_user']);
+	ok(strlen($cred['prov_pass']) > 10);
+	eq(str_repeat('F', 100), base64_decode(array_column($all['assets'], null, 'kind')['firmware']['data']));
+
+	$remote = new \FreePBX\modules\Openprov\Api($w->svc, 'remote');
+	throws(fn() => $remote->call('config.export', []), 'Not allowed');
+	throws(fn() => $remote->call('config.import', ['data' => $doc]), 'Not allowed');
+};
+
+$tests['exchange: import into another PBX: dry run changes nothing, then everything arrives with this PBX\'s ids'] = function () {
+	$src = exchangeWorld();
+	$doc = json_decode(json_encode($src->svc->exportConfig()), true);
+	$w = world();
+	// Make ids differ from the source's.
+	$wav = tempnam(sys_get_temp_dir(), 'wav');
+	file_put_contents($wav, "RIFF\x24\x00\x00\x00WAVEfmt " . str_repeat("\x02", 24));
+	$w->svc->addAsset('ringtone', 'Other.wav', $wav);
+	$w->svc->saveTemplate(['name' => 'Local only']);
+
+	$dry = $w->svc->importConfig($doc);
+	ok($dry['dryRun']);
+	eq(['Base', 'Sales'], $dry['templates']['created']);
+	eq(2, count($dry['devices']['created']));
+	eq(['ringtone Chime.wav'], $dry['assets']['added']);
+	eq(['firmware T87W-185.87.0.42.rom'], $dry['assets']['missing']);
+	eq([], $dry['errors'], 'no errors: ' . json_encode($dry['errors']));
+	eq(1, count($w->store->templates()), 'dry run: no templates');
+	eq(0, count($w->store->devices()), 'dry run: no phones');
+	eq(1, count($w->store->assets()), 'dry run: no files');
+	eq(1, count(glob($w->dir . '/files/*')), 'dry run: no file left on disk');
+	eq([], $w->store->featureRows(), 'dry run: no features');
+	eq(0, count($w->sent), 'dry run: no phone told anything');
+
+	$r = $w->svc->importConfig($doc, ['dryRun' => false]);
+	eq([], $r['errors'], json_encode($r['errors']));
+	$base = $w->store->templateByName('Base');
+	$sales = $w->store->templateByName('Sales');
+	eq($base['id'], $sales['parent_id'], 'parent by name');
+	$chime = $w->store->assetByName('ringtone', 'Chime.wav');
+	eq('asset:' . $chime['id'], $base['settings']['ringtone'], 'ringtone points at this PBX\'s copy');
+	ok($chime['id'] !== (int) array_column($doc['assets'], null, 'kind')['ringtone']['id'], 'ids really differ');
+	ok(!isset($base['settings']['firmware']), 'firmware setting left out (file missing)');
+	ok((bool) array_filter($r['warnings'], fn($x) => str_contains($x, 'firmware left out')), 'and warned');
+	eq("Sales=asset:{$chime['id']}", $sales['settings']['distinctive_ring']);
+	eq('1', $sales['settings']['feature.captions'], 'feature setting kept (feature imported first)');
+	$d = $w->store->deviceByMac(MAC);
+	eq($sales['id'], $d['template_id']);
+	eq('Front desk', $d['name']);
+	eq('212', $w->store->lines($d['id'])[0]['extension']);
+	eq('201', $w->store->keys('device', $d['id'])[0]['value']);
+	eq('6', $d['settings']['vpn'], 'VPN client 6 exists here');
+	ok($d['claimable'], 'new phone: bootstraps here');
+	ok($d['prov_pass'] !== $src->store->deviceByMac(MAC)['prov_pass'], 'its own new credential');
+	eq(null, $w->store->deviceByMac('805ec0aabbcc')['template_id'], 'no template stays none');
+	eq($base['id'], (int) $w->settings->get('default_template_id'), 'default template by name');
+	eq('', (string) $w->settings->get('external_host'), 'machine settings untouched');
+	eq('0', (string) (int) $w->settings->get('dashboard_rename'), 'portable settings applied');
+	eq('bootpass', $w->settings->get('bootstrap_pass'), 'own bootstrap credential kept');
+	ok($w->store->templateByName('Local only') !== null, 'nothing deleted');
+	eq(['captions'], array_keys($w->store->featureRows()));
+
+	// Importing again updates in place: nothing duplicated.
+	$again = $w->svc->importConfig($doc, ['dryRun' => false]);
+	eq(['Base', 'Sales'], $again['templates']['updated']);
+	eq([], $again['templates']['created']);
+	eq(2, count($again['devices']['updated']));
+	eq(['ringtone Chime.wav'], $again['assets']['existing']);
+	eq(3, count($w->store->templates()));
+	eq(2, count($w->store->assets()));
+};
+
+$tests['exchange: credentials only when exported and asked for; bad rows fail alone; VPN client checked'] = function () {
+	$src = exchangeWorld();
+	$plain = json_decode(json_encode($src->svc->exportConfig()), true);
+	$w = world();
+	throws(fn() => $w->svc->importConfig($plain, ['secrets' => true]), 'without passwords');
+	throws(fn() => $w->svc->importConfig(['templates' => []]), 'Not an OpenProv export');
+	throws(fn() => $w->svc->importConfig('{nope'), 'not valid JSON');
+
+	$doc = json_decode(json_encode($src->svc->exportConfig(['secrets' => true])), true);
+	$i = array_flip(array_column($doc['devices'], 'mac'));
+	$doc['devices'][$i[MAC]]['settings']['vpn'] = '99';
+	$doc['devices'][$i['805ec0aabbcc']]['lines'][0]['extension'] = '999';
+	$cred = $doc['devices'][$i[MAC]]['credentials'];
+	$r = $w->svc->importConfig($doc, ['dryRun' => false]);
+	eq(1, count($r['devices']['created']), 'the good phone');
+	ok(str_contains(implode(' ', $r['errors']), "Extension '999' does not exist"), 'the bad one reported');
+	eq('auto', $w->store->deviceByMac(MAC)['settings']['vpn']);
+	ok((bool) array_filter($r['warnings'], fn($x) => str_contains($x, 'VPN client 99')));
+	eq('bootpass', $w->settings->get('bootstrap_pass'), 'secrets not taken unless asked');
+	ok($w->store->deviceByMac(MAC)['prov_pass'] !== $cred['prov_pass']);
+
+	$w->settings->set('bootstrap_pass', 'mine');
+	$w->svc->importConfig($doc, ['dryRun' => false, 'secrets' => true]);
+	eq('bootpass', $w->settings->get('bootstrap_pass'), 'asked: taken');
+	$d = $w->store->deviceByMac(MAC);
+	eq($cred['prov_pass'], $d['prov_pass'], 'the phone keeps working with its credential');
+	eq((bool) $cred['claimable'], $d['claimable']);
+
+	// settings: false leaves module settings alone.
+	$w2 = world();
+	$w2->svc->importConfig($plain, ['dryRun' => false, 'settings' => false]);
+	eq(1, (int) $w2->settings->get('dashboard_rename'));
+	// CLI writes the file owner-only.
+	$f = sys_get_temp_dir() . '/opx-' . bin2hex(random_bytes(4)) . '.json';
+	$out = (new \FreePBX\modules\Openprov\Api($src->svc, 'cli'))->call('config.export', ['path' => $f, 'secrets' => true]);
+	eq($f, $out['written']);
+	eq('600', substr(sprintf('%o', fileperms($f)), -3));
+	$back = (new \FreePBX\modules\Openprov\Api($w2->svc, 'cli'))->call('config.import', ['path' => $f]);
+	ok($back['dryRun']);
+	$admin = new \FreePBX\modules\Openprov\Api($w2->svc, 'admin');
+	throws(fn() => $admin->call('config.import', ['path' => $f]), "Missing argument 'data'");
+	unlink($f);
+
+	// GUI: upload, preview (kept), cancel = discarded; a real import removes it too.
+	$json = json_encode($plain);
+	$up = fn(string $id) => $admin->call('upload.chunk', ['id' => $id, 'offset' => 0, '_raw' => $json]);
+	$part = fn(string $id) => $w2->assets->dir() . "/uploads/$id.part";
+	$up('aaaaaaaaaaaaaaaa');
+	ok($admin->call('config.import', ['upload' => 'aaaaaaaaaaaaaaaa'])['dryRun']);
+	ok(is_file($part('aaaaaaaaaaaaaaaa')), 'kept for the real import');
+	$admin->call('upload.discard', ['id' => 'aaaaaaaaaaaaaaaa']);
+	ok(!is_file($part('aaaaaaaaaaaaaaaa')), 'cancel discards it');
+	$up('bbbbbbbbbbbbbbbb');
+	ok(!$admin->call('config.import', ['upload' => 'bbbbbbbbbbbbbbbb', 'dryRun' => false])['dryRun']);
+	ok(!is_file($part('bbbbbbbbbbbbbbbb')), 'imported: removed');
+	throws(fn() => $admin->call('upload.discard', ['id' => '../../etc']), 'Bad upload id');
 };
 
 // ---- runner --------------------------------------------------------------------

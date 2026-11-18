@@ -26,6 +26,13 @@ class Web
 	public const PING_BODY = "openprov ok\n";
 	public const FIREWALL_SERVICE = 'OpenProv provisioning';
 	public const COMMAND = 'fwconsole openprov web --install';
+	/** Header carrying pingToken(): /_ping answers nobody else. */
+	public const PING_HEADER = 'X-OpenProv-Ping';
+
+	public static function pingToken(string $secret): string
+	{
+		return hash_hmac('sha256', 'openprov-ping', $secret);
+	}
 
 	private string $apacheDir;
 	/** @var callable(string): array{0:int,1:string} */
@@ -294,6 +301,7 @@ class Web
 			CURLOPT_CONNECTTIMEOUT => 3,
 			CURLOPT_TIMEOUT => 5,
 			CURLOPT_FOLLOWLOCATION => false,
+			CURLOPT_HTTPHEADER => [self::PING_HEADER . ': ' . self::pingToken((string) ($this->secret)())],
 		]);
 		$body = curl_exec($ch);
 		$code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);

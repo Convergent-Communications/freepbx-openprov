@@ -20,6 +20,22 @@
 		return new Date(ts * 1000).toLocaleString();
 	};
 
+	/** Send a file in 1 MB pieces (PHP's upload limits don't matter); returns the upload id. */
+	async function uploadFile(file) {
+		const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+		const CHUNK = 1024 * 1024;
+		for (let off = 0; off < file.size || off === 0; off += CHUNK) {
+			const res = await fetch(`ajax.php?module=openprov&command=api&action=upload.chunk&id=${id}&offset=${off}`, {
+				method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/octet-stream' }, body: file.slice(off, off + CHUNK),
+			});
+			const body = await res.json().catch(() => ({ status: false, message: 'Unexpected response (' + res.status + ')' }));
+			if (!body.status) throw new Error(body.message || 'Upload failed');
+			if (file.size > CHUNK) say(`Uploading ${file.name}: ${Math.min(100, Math.round(((off + CHUNK) / file.size) * 100))}%`, 'info');
+			if (file.size === 0) break;
+		}
+		return id;
+	}
+
 	async function api(action, args = {}, form = null) {
 		const url = 'ajax.php?module=openprov&command=api&action=' + encodeURIComponent(action);
 		const opts = { method: 'POST', credentials: 'same-origin' };
@@ -978,18 +994,7 @@
 			const file = f.file.files[0];
 			if (!file) return say('Choose a file first.', 'warning');
 			guard(f.querySelector('button'), async () => {
-				// Sent in 1 MB pieces so PHP's upload limits (2 MB by default) don't matter.
-				const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
-				const CHUNK = 1024 * 1024;
-				for (let off = 0; off < file.size || off === 0; off += CHUNK) {
-					const res = await fetch(`ajax.php?module=openprov&command=api&action=upload.chunk&id=${id}&offset=${off}`, {
-						method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/octet-stream' }, body: file.slice(off, off + CHUNK),
-					});
-					const body = await res.json().catch(() => ({ status: false, message: 'Unexpected response (' + res.status + ')' }));
-					if (!body.status) throw new Error(body.message || 'Upload failed');
-					if (file.size > CHUNK) say(`Uploading ${file.name}: ${Math.min(100, Math.round(((off + CHUNK) / file.size) * 100))}%`, 'info');
-					if (file.size === 0) break;
-				}
+				const id = await uploadFile(file);
 				const added = await api('asset.add', { kind: f.kind.value, name: file.name, model: f.model.value, upload: id });
 				delete cache.models;
 				say(added.duplicate ? `${file.name} is already uploaded (as ${added.name}); nothing new was added.` : 'Uploaded ' + file.name, added.duplicate ? 'info' : 'success');
@@ -1047,6 +1052,7 @@
 		bootstrap_user: 'Shared first-contact credential (DHCP option 66 / RPS). Only works for phones that are added and not yet claimed.',
 		bootstrap_pass: '',
 		allowed_networks: 'CIDRs allowed to provision (blank = any). E.g. 192.168.0.0/16, 10.8.0.0/24',
+		internet_ports: 'Ports that answer internet (non-LAN, non-VPN) addresses, over HTTPS only. Default 443: close 443 in the firewall and nothing of OpenProv\'s is reachable from outside. Blank = LAN and VPN only. Add a port only if your router forwards the internet\'s 443 to it.',
 		enforce_ua_mac: 'Refuse a MAC config when the User-Agent MAC differs.',
 		auto_adopt: 'Create unknown phones automatically on first bootstrap contact.',
 		auto_adopt_template: 'Template id for auto-adopted phones.',
@@ -1110,6 +1116,21 @@
 			<p class="small text-muted">Brands: Yealink. Each model is a JSON file in <code>models/yealink/</code> (see docs/ADDING-MODELS.md); other brands need a brand driver (<code>src/Brand</code>). Unverified models use vendor data and haven't been checked on hardware.</p>
 			<table class="table table-bordered table-sm table-striped op-table"><thead><tr><th>Brand</th><th>Model</th><th>Line keys</th><th>Accounts</th><th>Expansion</th><th>Wallpaper</th><th>Verified</th><th>Notes</th></tr></thead>
 			<tbody>${(await lookups()).models.map((m) => `<tr><td>${esc(m.brand)}</td><td>${esc(m.id)}</td><td>${m.lineKeys}</td><td>${m.accounts}</td><td>${m.expansion ? `${m.expansion.modules} × ${m.expansion.keysPerModule}` : '—'}</td><td>${m.wallpaper ? `${m.wallpaper.width}×${m.wallpaper.height}` : '—'}</td><td>${m.verified ? '<span class="badge badge-success">yes</span>' : '<span class="text-muted">no</span>'}</td><td class="small">${m.quirks?.vpnBlocksProvisioning ? '<span class="badge badge-warning">VPN: provisions through the tunnel</span> ' : ''}${m.verified ? esc(m.notes || '') : ''}</td></tr>`).join('')}</tbody></table>
+			<hr><h4>Export and import</h4>
+			<p class="small text-muted">One file with templates, phones (lines and keys), add-on features, uploaded wallpapers and ringtones, and module settings: to keep, or to load into another PBX.
+			Settings that describe this PBX (addresses, ports, HTTPS, firewall zones, allowed networks, VPN endpoints) are never included.
+			Firmware isn't included here (40-90 MB each): run <code>fwconsole openprov config.export firmware=true path=/root/openprov-export.json</code> for that.
+			Importing merges: templates match by name, phones by MAC, features by id and files by content; nothing on this PBX is deleted.</p>
+			<div class="form-row align-items-center">
+				<div class="col-auto"><button class="btn btn-default" id="op-x-export">Export</button></div>
+				<div class="col-auto"><label class="mb-0"><input type="checkbox" id="op-x-secrets"> Include passwords and phone credentials (keep the file safe)</label></div>
+			</div>
+			<div class="form-row align-items-center mt-2">
+				<div class="col-auto"><label class="btn btn-default mb-0">Import a file… <input type="file" id="op-x-file" accept=".json,application/json" hidden></label></div>
+				<div class="col-auto"><label class="mb-0"><input type="checkbox" id="op-x-settings" checked> Apply the file's module settings</label></div>
+				<div class="col-auto"><label class="mb-0"><input type="checkbox" id="op-x-isecrets"> Also take the file's passwords and phone credentials (replaces this PBX's)</label></div>
+			</div>
+			<div id="op-x-out" class="mt-2"></div>
 			<hr><h4>Import from Endpoint Manager</h4>
 			<p class="small text-muted">Copies EPM extension mappings (MAC, extension, VPN client) into OpenProv. EPM model names can be mapped, e.g. <code>{"SIP-T57W":"T87W"}</code> for phones that were set up as a stand-in model.</p>
 			<div class="form-row"><div class="col-md-4"><input class="form-control" id="op-epm-map" placeholder='{"SIP-T57W":"T87W"}'></div><div class="col-md-3"><select class="form-control" id="op-epm-tpl">${(await lookups()).templates.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></div>
@@ -1135,6 +1156,46 @@
 			if ($('#op-epm-map').value.trim()) modelMap = JSON.parse($('#op-epm-map').value);
 			const r = await api('import.epm', { dryRun, modelMap, template: $('#op-epm-tpl').value });
 			$('#op-epm-out').textContent = JSON.stringify(r, null, 2);
+		});
+		$('#op-x-export').onclick = (e) => guard(e.target, async () => {
+			const doc = await api('config.export', { secrets: $('#op-x-secrets').checked });
+			const a = document.createElement('a');
+			a.href = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }));
+			a.download = `openprov-export-${new Date().toISOString().slice(0, 10)}${doc.includes.secrets ? '-with-passwords' : ''}.json`;
+			a.click();
+			URL.revokeObjectURL(a.href);
+			say(`Exported ${doc.templates.length} template(s), ${doc.devices.length} phone(s), ${doc.assets.length} file(s)` + (doc.firmware_not_included.length ? ` (firmware not included: ${doc.firmware_not_included.join(', ')})` : ''), 'success');
+		});
+		const importReport = (r) => {
+			const names = (l) => l.length ? `: ${esc(l.join(', '))}` : '';
+			const row = (what, x, a = 'created', b = 'updated') => `<li>${what}: ${x[a].length} new${names(x[a])}; ${x[b].length} updated${names(x[b])}</li>`;
+			return `<ul class="mb-1">
+				${row('Templates', r.templates)}${row('Phones', r.devices)}${row('Add-on features', r.features)}
+				<li>Files: ${r.assets.added.length} added${names(r.assets.added)}; ${r.assets.existing.length} already here${r.assets.missing.length ? `; <b>${r.assets.missing.length} missing</b>${names(r.assets.missing)}` : ''}</li>
+				<li>Module settings changed: ${r.settings.changed.length ? esc(r.settings.changed.join(', ')) : 'none'}</li></ul>
+				${r.warnings.length ? `<div class="alert alert-warning mb-1"><ul class="mb-0">${r.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}
+				${r.errors.length ? `<div class="alert alert-danger mb-1"><b>${r.dryRun ? 'These would fail' : 'These failed'}:</b><ul class="mb-0">${r.errors.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}`;
+		};
+		$('#op-x-file').onchange = (e) => guard(null, async () => {
+			const file = e.target.files[0];
+			e.target.value = '';
+			if (!file) return;
+			const upload = await uploadFile(file);
+			const opts = () => ({ upload, settings: $('#op-x-settings').checked, secrets: $('#op-x-isecrets').checked });
+			const preview = async () => {
+				const r = await api('config.import', { ...opts(), dryRun: true });
+				$('#op-x-out').innerHTML = `<div class="card card-body"><b>${esc(file.name)}: what importing would do</b>${importReport(r)}
+					<div><button class="btn btn-primary btn-sm" id="op-x-run">Import</button> <button class="btn btn-default btn-sm" id="op-x-again">Preview again</button> <button class="btn btn-default btn-sm" id="op-x-cancel">Cancel</button></div></div>`;
+				$('#op-x-again').onclick = (ev) => guard(ev.target, preview);
+				$('#op-x-cancel').onclick = () => { $('#op-x-out').innerHTML = ''; api('upload.discard', { id: upload }).catch(() => {}); };
+				$('#op-x-run').onclick = (ev) => confirm('Import this file into OpenProv? Phones that change are updated.') && guard(ev.target, async () => {
+					const done = await api('config.import', { ...opts(), dryRun: false });
+					delete cache.models;
+					$('#op-x-out').innerHTML = `<div class="card card-body"><b>Imported ${esc(file.name)}</b>${importReport(done)}</div>`;
+					say('Import finished', done.errors.length ? 'warning' : 'success');
+				});
+			};
+			await preview();
 		});
 		$('#op-epm-dry').onclick = () => epm(true);
 		$('#op-epm-run').onclick = () => confirm('Import these phones into OpenProv?') && epm(false);

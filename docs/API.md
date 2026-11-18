@@ -53,6 +53,9 @@ arguments can be JSON (`devices='["c4fc22a1b2c3"]'`).
 | `discovered` | `days?` | Unknown phones that asked for a config, plus registered Yealinks not managed here |
 | `adopt` | `mac, model, extension?, template?` | |
 | `export.csv` / `import.csv` | `csv` | Columns: `mac,model,template,name,extension,extension2,enabled` |
+| `config.export` | `secrets?=false, firmware?=false, path?` | Everything as one JSON document (see "Export and import"). `path` (CLI only) writes it there, owner-only. Not allowed from the dashboard |
+| `config.import` | `data \| upload \| path, dryRun?=true, settings?=true, secrets?=false` | Merges an export into this PBX. `data` = the document (object or JSON text); `upload` = a GUI upload id; `path` CLI only. Returns what was (or, with `dryRun`, would be) created/updated, plus `warnings` and `errors`. Not allowed from the dashboard |
+| `upload.discard` | `id` | Deletes a GUI upload that won't be used (a cancelled import preview) |
 | `import.epm` | `dryRun?=true, template?, modelMap?` | Copies commercial EPM mappings across |
 | `vpn.rebuild-prepare` / `vpn.rebuild-finish` | `tunnelBoundOnly?=false` | Hold VPN off for the VPN phones (all, or only tunnel-bound) during a full VPN rebuild; given back automatically when the new CA is seen, or now with `finish`. Not allowed from the dashboard |
 | `vpn.rebuild-check` | | Tunnel-bound VPN phones a full VPN rebuild would cut off (`stranded`, with `repoint_url`), how many others are pushed automatically, and, after a detected rebuild, the phones still `waiting` |
@@ -106,6 +109,39 @@ fwconsole openprov resync extension=213                # every phone that shows 
 fwconsole openprov asset.add kind=firmware path=/tmp/Yealink-T7X-185.87.0.37.rom model=T87W
 fwconsole openprov import.epm modelMap='{"SIP-T57W":"T87W"}'   # dry run
 ```
+
+## Export and import
+
+`config.export` writes one JSON document (`openprov_export: 1`) with:
+
+- **templates** (by name, with their parent's name, settings, raw lines and keys)
+- **phones** (MAC, model, template name, name, enabled, settings, raw lines, lines, keys)
+- **custom add-on features**
+- **uploaded files**, base64: wallpapers and ringtones always; firmware only with `firmware=true` (40-90 MB each; the GUI leaves it out, use the CLI)
+- **module settings** that aren't about this machine; template ids appear as names.
+
+Never in a file: `internal_host`, `external_host`, `phone_scheme`, `https_mode`, `https_port`, `http_port`, `service_port`, `firewall_zones`, `internet_ports`, `allowed_networks`, `vpn_external_remote`, `vpn_provisioning_host`; the request log, discovered phones and sync state.
+
+Only with `secrets=true`: the bootstrap credential, `admin_password`, `user_password`, `device_secret` and each phone's provisioning credential. Treat such a file like a password vault: it is everything needed to fetch every phone's SIP password.
+
+`config.import` merges:
+
+- **Matching:** templates by name, phones by MAC, features by id, files by content (SHA-256). Anything this PBX has that the file doesn't mention is left alone.
+- **File ids:** settings that point at uploaded files are rewritten to this PBX's copies. A firmware file left out of the export is matched by name to one already uploaded here; otherwise the setting is dropped with a warning (upload it, then import again).
+- **VPN:** a phone's VPN client id that doesn't exist here becomes `auto`, with a warning.
+- **Credentials:** without `secrets`, this PBX keeps its own bootstrap credential and passwords, and phones new to it get a fresh credential, so they bootstrap here (point them at this PBX, or Re-arm them). With `secrets` (only for a file exported with them), the file's values replace this PBX's, so phones moved here keep working with the credential they already have.
+- **Errors:** a row that fails (an extension that doesn't exist here, an unknown model) is reported in `errors`; the rest still import.
+- **Dry run** (the default): makes every change inside a database transaction and rolls it back, so the report shows exactly what would happen, errors included. Module settings are compared, not written.
+- **Phones** that change are updated once, at the end (as after any save).
+
+```sh
+fwconsole openprov config.export path=/root/openprov.json                        # no passwords, no firmware
+fwconsole openprov config.export path=/root/openprov-full.json secrets=true firmware=true
+fwconsole openprov config.import path=/root/openprov.json                        # dry run: what would change
+fwconsole openprov config.import path=/root/openprov.json dryRun=false
+```
+
+The GUI has the same on the Settings tab: Export (optionally with passwords), and Import a file → preview → Import or Cancel.
 
 ## Remote (GraphQL) callers and the dashboard policy
 

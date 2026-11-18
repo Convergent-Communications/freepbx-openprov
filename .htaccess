@@ -1,0 +1,22 @@
+# OpenProv's module directory is never served: not code, docs, keys, models
+# or the admin page's script and stylesheet (views/main.php inlines those, so
+# they reach only signed-in FreePBX admins). Phones use /openprov/, a symlink
+# to htdocs/ with its own .htaccess; requests there don't read this file.
+# Both mechanisms, in case one of the modules is missing. FilesMatch so the
+# grant in /admin/.htaccess for *.js, *.css, images etc. can't override it.
+<IfModule mod_authz_core.c>
+	<FilesMatch ".*">
+		Require all denied
+	</FilesMatch>
+	Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+	<FilesMatch ".*">
+		Order allow,deny
+		Deny from all
+	</FilesMatch>
+</IfModule>
+<IfModule mod_rewrite.c>
+	RewriteEngine On
+	RewriteRule ^ - [F]
+</IfModule>

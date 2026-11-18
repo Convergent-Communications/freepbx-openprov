@@ -120,6 +120,22 @@ final class Util
 	}
 
 	/** Is $ip inside any CIDR in $list (IPv4 and IPv6)? Empty list = allow. */
+	/** Addresses that can't come from the public internet (LAN, VPN, loopback). */
+	public const PRIVATE_NETWORKS = [
+		'10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '169.254.0.0/16',
+		'100.64.0.0/10', // carrier-grade NAT / Tailscale
+		'::1/128', 'fc00::/7', 'fe80::/10',
+	];
+
+	/** A private (non-internet) source address. IPv4-mapped IPv6 counts as its IPv4. */
+	public static function isPrivateIp(string $ip): bool
+	{
+		if (preg_match('/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i', $ip, $m)) {
+			$ip = $m[1];
+		}
+		return @inet_pton($ip) !== false && self::ipAllowed($ip, self::PRIVATE_NETWORKS);
+	}
+
 	public static function ipAllowed(string $ip, array $list): bool
 	{
 		$list = array_values(array_filter(array_map('trim', $list)));

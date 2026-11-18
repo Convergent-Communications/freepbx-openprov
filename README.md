@@ -14,6 +14,8 @@ built to be driven by people (GUI) and by software (CLI and GraphQL).
 - **Phone screenshots:** the phone page's Screen tab shows the live screen. The PBX fetches it, so it works for VPN phones too. The phone accepts the request only from the PBX's own addresses.
 - **Automatic updates.** Phones update via SIP check-sync, including over the VPN. Tunnel-bound models (T87W) provision through the tunnel (see `docs/YEALINK-VPN-ISSUE.md`). A web-API reboot is available as an option.
 - **EPM import:** migrates EPM's extension mappings.
+- **Export and import:** templates, phones, keys, features, files and settings as one JSON file, with a dry-run preview. Passwords only on request (`docs/API.md`).
+- **Nothing on the internet but 443:** internet addresses are answered only over HTTPS on 443, and every file needs a credential (`docs/DESIGN.md` D3).
 
 ## Install
 

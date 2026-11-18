@@ -24,6 +24,12 @@ class Settings
 		'bootstrap_user' => '',         // generated on install
 		'bootstrap_pass' => '',
 		'allowed_networks' => '',       // newline/comma separated CIDRs; blank = any
+		// Ports on which OpenProv answers requests from internet (non-private)
+		// addresses, over HTTPS only. Anything else from the internet gets a bare
+		// 404, so with 443 closed in the firewall nothing is reachable from
+		// outside. Blank = LAN/VPN only. Add a port only when a router forwards
+		// the internet's 443 to it.
+		'internet_ports' => '443',
 		'enforce_ua_mac' => true,       // UA MAC must match the requested MAC
 		'auto_adopt' => false,          // create unknown phones on first bootstrap contact
 		'auto_adopt_template' => 0,
@@ -153,6 +159,15 @@ class Settings
 		if ($key === 'https_mode' && !in_array($value, ['auto', 'freepbx', 'service'], true)) {
 			throw new \InvalidArgumentException('https_mode must be auto, freepbx or service');
 		}
+		if ($key === 'internet_ports') {
+			$ports = array_values(array_unique(array_filter(array_map('trim', preg_split('/[\s,]+/', $value)), 'strlen')));
+			foreach ($ports as $p) {
+				if (!ctype_digit($p) || (int) $p < 1 || (int) $p > 65535) {
+					throw new \InvalidArgumentException("internet_ports: '$p' is not a TCP port (1-65535); blank = LAN and VPN only");
+				}
+			}
+			$value = implode(',', $ports);
+		}
 		if ($key === 'firewall_zones') {
 			$zones = array_filter(array_map('trim', explode(',', strtolower($value))));
 			$bad = array_diff($zones, ['trusted', 'internal', 'other', 'external']);
@@ -247,6 +262,12 @@ class Settings
 		$s = $toMin($a);
 		$e = $toMin($b);
 		return $s <= $e ? ($n >= $s && $n < $e) : ($n >= $s || $n < $e);
+	}
+
+	/** @return int[] ports that answer internet (non-private) addresses */
+	public function internetPorts(): array
+	{
+		return array_map('intval', array_filter(explode(',', (string) $this->get('internet_ports')), 'strlen'));
 	}
 
 	public function allowedNetworks(): array

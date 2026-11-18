@@ -20,11 +20,24 @@ class ProvisionServer
 	) {
 	}
 
-	/** $secure: the request came over HTTPS (htdocs/index.php). */
-	public function handle(string $path, string $ua, string $ip, ?string $user, ?string $pass, bool $secure = true): array
+	/**
+	 * $secure: the request came over HTTPS. $port: the TCP port it arrived on
+	 * (htdocs/index.php; 0 = unknown).
+	 */
+	public function handle(string $path, string $ua, string $ip, ?string $user, ?string $pass, bool $secure = true, int $port = 443): array
 	{
 		$path = '/' . ltrim(rawurldecode(parse_url($path, PHP_URL_PATH) ?? '/'), '/');
 		$log = ['ip' => $ip, 'ua' => $ua, 'path' => $path];
+
+		// The internet reaches OpenProv only over HTTPS on internet_ports (443):
+		// close 443 in the firewall and nothing here answers from outside. Every
+		// other port (FreePBX's HTTP and extra HTTPS ports, OpenProv's own HTTPS
+		// service) serves LAN and VPN addresses only. A bare 404, before any
+		// credential is looked at, so it says nothing about what is here.
+		if (!Util::isPrivateIp($ip) && (!$secure || !in_array($port, $this->settings->internetPorts(), true))) {
+			$r = $this->deny(404, "internet address on port $port (" . ($secure ? 'HTTPS' : 'HTTP') . '; internet_ports)', $log);
+			return ['body' => ''] + $r;
+		}
 
 		if (!Util::ipAllowed($ip, $this->settings->allowedNetworks())) {
 			return $this->deny(403, 'source address not allowed', $log);

@@ -97,6 +97,8 @@ class TlsService
 			'key' => $c['key'],
 			'ca' => $c['ca'] ?? null,
 			'statusFile' => $this->statusFile(),
+			// A module upgrade that changes the service's code restarts it.
+			'script' => is_file($this->script) ? substr((string) hash_file('sha256', $this->script), 0, 16) : '',
 		], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 		$old = is_file($this->configFile()) ? (string) file_get_contents($this->configFile()) : '';
 		$changed = $old !== $cfg;

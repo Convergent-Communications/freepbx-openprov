@@ -98,6 +98,45 @@ what was chosen, why, and what was rejected.
   - *Moving provisioning itself into Node*: OpenProv is PHP that needs
     FreePBX in-process (D1, D2). The pm2 service only terminates TLS and
     forwards to the same PHP, so there is one implementation.
+- **Internet access (2026-11-18): only HTTPS on 443, and only with credentials.**
+  - **Rule:** a request from an internet (non-private) address is answered
+    only when it arrives over HTTPS on a port in `internet_ports` (default
+    `443`). Anything else from the internet (plain HTTP, FreePBX's other
+    ports, OpenProv's HTTPS service on 8449) gets a bare 404 before any
+    credential is looked at. So with 443 closed in the firewall, nothing of
+    OpenProv's is reachable from outside. On 443 every path needs a
+    credential (D4).
+  - **What counts as private:** 10/8, 172.16/12, 192.168/16, 127/8,
+    169.254/16, 100.64/10 (carrier-grade NAT, Tailscale), ::1, fc00::/7 and
+    fe80::/10. That covers LAN phones and the System Admin VPN on any port.
+  - **`internet_ports`:** blank means LAN and VPN only. Add a port only when
+    a router forwards the internet's 443 to it (e.g. 443 → 8449).
+  - **How the port is known:**
+    - Through OpenProv's HTTPS service, it sends its real listening port with
+      the shared secret (`X-OpenProv-Port`). An older service that doesn't
+      send it gets port 0, so internet addresses are refused.
+    - Directly on Apache, PHP has only `SERVER_PORT`. Apache takes that from
+      the Host header when the header names a port, and `UseCanonicalPhysicalPort`
+      can't be set from `.htaccess` (and OpenProv doesn't write Apache
+      config). So on a box where another of FreePBX's HTTPS ports is open to
+      the internet, a client there could claim 443. Keep FreePBX's other HTTPS
+      ports closed to the internet in the Firewall module, which is the
+      default for its admin ports anyway.
+  - **`/_ping`** (the health check) answers only requests carrying
+    `X-OpenProv-Ping: HMAC(proxy secret)`, which only OpenProv itself sends.
+    Everyone else gets the same 404 as an unknown path.
+  - **The module directory** (`/admin/modules/openprov/…`) is closed by its own
+    `.htaccess` (`Require all denied` in a `FilesMatch`, so `/admin/.htaccess`'s
+    grant for `*.js`/`*.css`/images can't override it, plus a rewrite to 403).
+    Before this, FreePBX's web root served `LICENSE`, the admin script,
+    `bin/module-sign` and `githooks/pre-push` to anyone. The admin page's
+    script and stylesheet now live in `views/` and are inlined by
+    `views/main.php`, so they reach only signed-in admins. `/openprov/` is a
+    symlink to `htdocs/`, and Apache doesn't read the module root's
+    `.htaccess` for it.
+  - **Files at rest:** uploads, firmware, wallpapers, ringtones and the VPN
+    profiles are under `/var/lib/asterisk/openprov`, outside the web root, and
+    are only ever sent by `ProvisionServer` to an authenticated phone.
 - **Upgrade:** see `UPGRADE-0.2.md`. Removing the 0.1 vhost is the only
   remaining Apache action. It runs as root from fwconsole only (module
   install/upgrade, `fwconsole reload`, `fwconsole openprov web --install`),

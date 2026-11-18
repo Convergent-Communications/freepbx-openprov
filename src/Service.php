@@ -1613,6 +1613,18 @@ class Service
 		return $out;
 	}
 
+	/** Run changes without telling phones (an import preview that is rolled back). */
+	public function withoutSync(callable $fn)
+	{
+		$was = $this->deferSync;
+		$this->deferSync = true;
+		try {
+			return $fn($this);
+		} finally {
+			$this->deferSync = $was;
+		}
+	}
+
 	/** Run several changes, then sync once. */
 	public function batch(callable $fn)
 	{
@@ -1695,6 +1707,13 @@ class Service
 		}
 		file_put_contents($path, $data, FILE_APPEND | LOCK_EX);
 		return ['received' => $have + strlen($data)];
+	}
+
+	/** Throw away an upload that won't be used (an import preview cancelled). */
+	public function discardUpload(string $id): array
+	{
+		@unlink($this->uploadPath($id));
+		return ['discarded' => $id];
 	}
 
 	private function uploadPath(string $id): string
@@ -1861,6 +1880,48 @@ class Service
 			}
 		});
 		return ['imported' => $done, 'errors' => $errors];
+	}
+
+	// ---- export / import (Exchange) ----------------------------------------
+
+	private function exchange(): Exchange
+	{
+		return new Exchange($this, $this->store, $this->settings, $this->assets, $this->catalog, $this->vpn);
+	}
+
+	/** Everything as one JSON document; $opts: secrets, firmware (see Exchange). */
+	public function exportConfig(array $opts = []): array
+	{
+		return $this->exchange()->export($opts);
+	}
+
+	/**
+	 * Import an export. $source: the document (array or JSON text), or
+	 * ['upload' => id] (a GUI upload), or ['path' => file] (CLI only).
+	 * $opts: dryRun (default true), settings (default true), secrets.
+	 */
+	public function importConfig($source, array $opts = []): array
+	{
+		if (is_array($source) && isset($source['upload'])) {
+			$file = $this->uploadPath((string) $source['upload']);
+			if (!is_file($file)) {
+				throw new \InvalidArgumentException('Upload not found (it may have expired)');
+			}
+			$source = (string) file_get_contents($file);
+			if (empty($opts['dryRun']) && array_key_exists('dryRun', $opts)) {
+				@unlink($file);
+			}
+		} elseif (is_array($source) && isset($source['path'])) {
+			$source = @file_get_contents((string) $source['path']);
+			if ($source === false) {
+				throw new \InvalidArgumentException('Cannot read that file');
+			}
+		}
+		$doc = is_string($source) ? json_decode($source, true) : $source;
+		if (!is_array($doc)) {
+			throw new \InvalidArgumentException('The file is not valid JSON');
+		}
+		return $this->exchange()->import($doc, $opts);
 	}
 
 	/** Copy commercial EPM extension mappings (endpoint_extensions) into OpenProv. */

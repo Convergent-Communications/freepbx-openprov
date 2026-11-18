@@ -59,12 +59,15 @@ function handler(req, res) {
 	}
 	const headers = {};
 	for (const [k, v] of Object.entries(req.headers)) {
-		if (!HOP.includes(k) && k !== 'x-forwarded-for' && k !== 'x-openprov-proxy') {
+		if (!HOP.includes(k) && !['x-forwarded-for', 'x-openprov-proxy', 'x-openprov-port'].includes(k)) {
 			headers[k] = v;
 		}
 	}
 	headers['x-forwarded-for'] = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
 	headers['x-openprov-proxy'] = cfg.secret;
+	// The port the phone connected to: index.php answers internet addresses
+	// only on internet_ports (443).
+	headers['x-openprov-port'] = String(req.socket.localPort || 0);
 	const up = http.request({ host: '127.0.0.1', port: cfg.upstreamPort, method: req.method, path, headers }, (ur) => {
 		const out = {};
 		for (const [k, v] of Object.entries(ur.headers)) {

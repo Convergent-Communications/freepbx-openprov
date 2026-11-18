@@ -72,12 +72,15 @@ class Api
 			'assets.list' => '{kind?}',
 			'asset.add' => '{kind, name, path (CLI only) | base64 | upload (id from upload.chunk)}',
 			'upload.chunk' => '(GUI) raw body = the next piece of a file; query id=<hex>&offset=<bytes so far>',
+			'upload.discard' => '{id} (GUI) delete an upload that won\'t be used (e.g. a cancelled import preview)',
 			'asset.delete' => '{id}',
 			'events' => '{limit?, mac?}',
 			'discovered' => '{days?}',
 			'adopt' => '{mac, model, extension?, template?}',
 			'export.csv' => '',
 			'import.csv' => '{csv}',
+			'config.export' => '{secrets?: false, firmware?: false, path? (CLI: write the file there)} — templates, phones, keys, features, files and module settings as one JSON document (docs/API.md)',
+			'config.import' => '{data (the export, object or JSON text) | upload (GUI) | path (CLI), dryRun?: true, settings?: true, secrets?: false} — merge an export into this PBX; dryRun reports what would change',
 			'import.epm' => '{dryRun?: bool (default true), template?, modelMap?: {"SIP-T57W": "T87W"}}',
 			'web.status' => '',
 			'web.check' => '',
@@ -182,6 +185,7 @@ class Api
 			case 'devices.showing': return array_map(fn($d) => ['id' => $d['id'], 'mac' => $d['mac'], 'name' => $d['name']], $s->devicesShowing((string) $need('extension')));
 			case 'devices.forExtension': return $s->devicesForExtension((string) $need('extension'));
 			case 'assets.list': return $s->listAssets($a['kind'] ?? null);
+			case 'upload.discard': return $s->discardUpload((string) $need('id'));
 			case 'upload.chunk': return $s->uploadChunk((string) $need('id'), (int) ($a['offset'] ?? -1), (string) ($a['_raw'] ?? ''));
 			case 'asset.add':
 				if (isset($a['upload'])) {
@@ -200,6 +204,28 @@ class Api
 			case 'adopt': return $s->adopt((string) $need('mac'), (string) $need('model'), $a['extension'] ?? null, $a['template'] ?? null);
 			case 'export.csv': return $s->exportDevicesCsv();
 			case 'import.csv': return $s->importDevicesCsv((string) $need('csv'));
+			case 'config.export':
+				$doc = $s->exportConfig(['secrets' => $bool('secrets'), 'firmware' => $bool('firmware')]);
+				if (isset($a['path'])) { // CLI only (dispatch drops path for others)
+					$json = json_encode($doc, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+					$old = umask(0077); // may hold credentials
+					$ok = @file_put_contents((string) $a['path'], $json);
+					umask($old);
+					if ($ok === false) {
+						throw new \InvalidArgumentException("Cannot write {$a['path']}");
+					}
+					return ['written' => (string) $a['path'], 'bytes' => strlen($json), 'templates' => count($doc['templates']), 'devices' => count($doc['devices']), 'assets' => count($doc['assets']), 'includes' => $doc['includes']];
+				}
+				return $doc;
+			case 'config.import':
+				$opts = ['dryRun' => $bool('dryRun', true), 'settings' => $bool('settings', true), 'secrets' => $bool('secrets')];
+				if (isset($a['upload'])) {
+					return $s->importConfig(['upload' => (string) $a['upload']], $opts);
+				}
+				if (isset($a['path'])) {
+					return $s->importConfig(['path' => (string) $a['path']], $opts);
+				}
+				return $s->importConfig($need('data'), $opts);
 			case 'import.epm': return $s->importEpm($bool('dryRun', true), $a['template'] ?? null, (array) ($a['modelMap'] ?? []));
 			case 'web.status': return $s->webStatus();
 			case 'web.check': return $s->webCheck();

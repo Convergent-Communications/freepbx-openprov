@@ -63,7 +63,13 @@ try {
 
 if ($path === \FreePBX\modules\Openprov\Web::PING) {
 	// Health check (fwconsole openprov web --check, Settings tab): proves
-	// Apache routes the path here and FreePBX bootstraps.
+	// Apache routes the path here and FreePBX bootstraps. Only OpenProv itself
+	// knows the token; anyone else gets the same 404 as any unknown path.
+	$token = (string) ($_SERVER['HTTP_X_OPENPROV_PING'] ?? '');
+	if ($token === '' || !hash_equals(\FreePBX\modules\Openprov\Web::pingToken($openprov->proxySecret()), $token)) {
+		http_response_code(404);
+		exit;
+	}
 	header('Content-Type: text/plain');
 	echo \FreePBX\modules\Openprov\Web::PING_BODY;
 	exit;
@@ -72,6 +78,10 @@ if ($path === \FreePBX\modules\Openprov\Web::PING) {
 // Forwarded by OpenProv's HTTPS service (node/tls-service.js): it terminated
 // TLS and names the phone. Trusted only from loopback with the shared secret.
 $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+// The port the request reached Apache on. Apache derives SERVER_PORT from the
+// Host header when that names a port, so on a box with several HTTPS ports a
+// client could name another one; DESIGN.md D3 ("Internet access") covers it.
+$port = (int) ($_SERVER['SERVER_PORT'] ?? 0);
 $proxyHeader = (string) ($_SERVER['HTTP_X_OPENPROV_PROXY'] ?? '');
 if ($proxyHeader !== '' && in_array($ip, ['127.0.0.1', '::1'], true)) {
 	$fwd = trim((string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ''));
@@ -81,10 +91,13 @@ if ($proxyHeader !== '' && in_array($ip, ['127.0.0.1', '::1'], true)) {
 	}
 	$ip = $fwd;
 	$secure = true;
+	// The service's own listening port (0 from an older service that doesn't
+	// send it: then internet addresses are refused).
+	$port = (int) ($_SERVER['HTTP_X_OPENPROV_PORT'] ?? 0);
 }
 
 try {
-	$res = $openprov->provisionServer()->handle($path, (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), $ip, $user, $pass, $secure);
+	$res = $openprov->provisionServer()->handle($path, (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), $ip, $user, $pass, $secure, $port);
 } catch (\Throwable $e) {
 	error_log('OpenProv: ' . $e->getMessage());
 	$res = ['status' => 500, 'headers' => [], 'body' => "internal error\n"];

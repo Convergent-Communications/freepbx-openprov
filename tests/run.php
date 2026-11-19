@@ -1344,14 +1344,14 @@ $tests['vpn: prepare for a rebuild holds tunnel-bound phones off the VPN, and gi
 	eq('1', $cfg()['static.network.vpn_enable']);
 };
 
-$tests['screenshot: redirects are followed only on the same phone over HTTPS'] = function () {
-	$f = fn($loc, $host = '10.8.0.5') => Service::samePhonePath($loc, $host);
+$tests['screenshot: a redirect gives only a path to fetch again from the same phone'] = function () {
+	$f = fn($loc) => Service::redirectPath($loc);
 	eq('/servlet?m=mod_action&command=screenshot', $f('https://10.8.0.5/servlet?m=mod_action&command=screenshot'), 'T48S: same phone');
-	eq(null, $f('http://10.8.0.5/servlet?m=mod_action&command=screenshot'), 'plain HTTP: the password is not sent');
-	eq(null, $f('https://evil.example/screencapture'), 'another host');
-	eq(null, $f('https://10.8.0.5:8443/screencapture'), 'another port');
+	eq('/servlet?m=mod_action&command=screenshot', $f('http://10.8.0.5/servlet?m=mod_action&command=screenshot'), 'plain HTTP: path only, still fetched over HTTPS');
+	eq('/servlet?m=mod_action&command=screenshot', $f('https://192.168.1.50:443/servlet?m=mod_action&command=screenshot'), 'LAN address, explicit port');
+	eq('/x', $f('https://[fd00::5]/x'), 'IPv6');
 	eq(null, $f(''), 'no Location');
-	eq('/x', $f('https://[fd00::5]/x', '[fd00::5]'), 'IPv6');
+	eq(null, $f('https://10.8.0.5'), 'no path');
 };
 
 $tests['render: DND at the phone dials FreePBX\'s codes per account; custom codes; off clears them'] = function () {

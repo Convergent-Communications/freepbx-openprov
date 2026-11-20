@@ -853,6 +853,86 @@
    "default": "",
    "computed": true,
    "help": "Numbers matching a pattern dial immediately, e.g. 911 or [2-9]xx. Yealink dial-now rules."
+  },
+  {
+   "id": "phonebook_1",
+   "label": "Phonebook 1",
+   "group": "Directory",
+   "type": "phonebook",
+   "computed": true,
+   "help": "A Contact Manager group the phone shows as remote phonebook 1 (Directory > Remote Phone Book). Setting any phonebook makes OpenProv manage all five: slots left blank or 'Off' are cleared on the phone. Edits in Contact Manager reach phones within about 5 minutes (the next sync check), without Apply Config. Blank on every slot: not managed, the phone keeps whatever phonebooks it has."
+  },
+  {
+   "id": "phonebook_2",
+   "label": "Phonebook 2",
+   "group": "Directory",
+   "type": "phonebook",
+   "computed": true,
+   "help": "A Contact Manager group shown as remote phonebook 2. See Phonebook 1."
+  },
+  {
+   "id": "phonebook_3",
+   "label": "Phonebook 3",
+   "group": "Directory",
+   "type": "phonebook",
+   "computed": true,
+   "help": "A Contact Manager group shown as remote phonebook 3. See Phonebook 1."
+  },
+  {
+   "id": "phonebook_4",
+   "label": "Phonebook 4",
+   "group": "Directory",
+   "type": "phonebook",
+   "computed": true,
+   "help": "A Contact Manager group shown as remote phonebook 4. See Phonebook 1."
+  },
+  {
+   "id": "phonebook_5",
+   "label": "Phonebook 5",
+   "group": "Directory",
+   "type": "phonebook",
+   "computed": true,
+   "help": "A Contact Manager group shown as remote phonebook 5. See Phonebook 1."
+  },
+  {
+   "id": "phonebook_lookup",
+   "label": "Caller names from phonebooks",
+   "group": "Directory",
+   "type": "bool",
+   "computed": true,
+   "blankLabel": "Yes when a phonebook is set",
+   "help": "Look up incoming and outgoing numbers in the remote phonebooks and show the contact's name. A phonebook name wins over the caller ID name FreePBX sends (checked on the T87W). Blank: on whenever a phonebook is set here, otherwise left alone."
+  },
+  {
+   "id": "phonebook_refresh",
+   "label": "Phonebook refresh (seconds)",
+   "group": "Directory",
+   "type": "number",
+   "min": 3600,
+   "max": 1296000,
+   "keys": {
+    "features.remote_phonebook.flash_time": "{value}"
+   },
+   "help": "How often the phone downloads its phonebooks again (Yealink: 3600 to 1296000; factory default 21600, 6 hours). Rarely needed: OpenProv already makes phones download a book soon after it changes."
+  },
+  {
+   "id": "phonebook_refresh_on_open",
+   "label": "Refresh phonebook when opened",
+   "group": "Directory",
+   "type": "bool",
+   "keys": {
+    "features.remote_phonebook.enter_update_enable": "{value}"
+   },
+   "help": "Download a remote phonebook again each time someone opens it on the phone (factory default: no)."
+  },
+  {
+   "id": "caller_photo",
+   "label": "Caller photos",
+   "group": "Directory",
+   "type": "bool",
+   "computed": true,
+   "blankLabel": "Yes on VPN phones when caller_photos is on",
+   "help": "Show the caller's Contact Manager photo while the phone rings (account.N.picture_info_enable). The photo comes from the PBX over the VPN tunnel, so only phones with a working VPN profile can show one. Blank: on for color models on the VPN while the PBX setting caller_photos is on, otherwise left alone. Phones without a photo for the caller show initials."
   }
  ]
 }

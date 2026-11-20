@@ -9,7 +9,7 @@ class Api
 {
 	/** Actions that only read (GraphQL read scope; never checked against the dashboard policy). */
 	public const READ_ONLY = [
-		'info', 'settings.get', 'models', 'schema', 'keytypes', 'targets', 'extensions', 'vpn.clients', 'vpn.expiring', 'vpn.rebuild-check',
+		'info', 'settings.get', 'models', 'schema', 'keytypes', 'targets', 'extensions', 'phonebooks', 'vpn.clients', 'vpn.expiring', 'vpn.rebuild-check',
 		'templates.list', 'template.get', 'devices.list', 'device.get', 'render', 'devices.showing', 'devices.forExtension',
 		'assets.list', 'events', 'discovered', 'export.csv', 'web.status', 'web.check',
 		'dashboard.policy', 'features.list', 'device.sync', 'ringtones.builtin', 'extension.get',
@@ -35,6 +35,7 @@ class Api
 			'keytypes' => '{brand?}',
 			'targets' => 'Catalog of extensions and feature codes keys can point at',
 			'extensions' => 'PBX extensions with display names',
+			'phonebooks' => 'Contact Manager groups the phonebook_1..5 settings can name: [{id, name, type, owner}]',
 			'vpn.clients' => 'System Admin OpenVPN clients, with certificate expiry (expires, caExpires: unix time)',
 			'vpn.rebuild-prepare' => '{tunnelBoundOnly?: false} hold the VPN off for every VPN phone (or only the tunnel-bound ones) so they provision directly during a full VPN rebuild and do not trip fail2ban; given back when the new CA is seen',
 			'vpn.rebuild-finish' => 'give the held phones their VPN back now (rebuild done, or cancel)',
@@ -141,6 +142,7 @@ class Api
 			case 'keytypes': return $s->keyTypes($a['brand'] ?? 'yealink');
 			case 'targets': return $s->keyTargets();
 			case 'extensions': return $s->extensions();
+			case 'phonebooks': return $s->phonebooks();
 			case 'vpn.clients': return $s->vpnClients();
 			case 'vpn.rebuild-check': return $s->vpnRebuildCheck();
 			case 'vpn.rebuild-prepare': return $s->vpnRebuildPrepare($bool('tunnelBoundOnly'));

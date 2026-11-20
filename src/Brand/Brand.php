@@ -47,4 +47,10 @@ interface Brand
 
 	/** Content of the model's common file (shared by all phones of a model). */
 	public function common(array $ctx): string;
+
+	/**
+	 * A remote phonebook file: $entries as Pbx::contactBook() returns them
+	 * ([['name', 'numbers' => [['number', 'type']]]]).
+	 */
+	public function phonebook(string $title, array $entries): string;
 }

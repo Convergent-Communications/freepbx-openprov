@@ -427,6 +427,7 @@ class Exchange
 			$types[$s['id']] = $s['type'];
 		}
 		$clients = null;
+		$groups = null;
 		foreach ($settings as $k => $v) {
 			$type = $types[$k] ?? '';
 			$v = is_scalar($v) ? (string) $v : '';
@@ -454,6 +455,13 @@ class Exchange
 					$r['warnings'][] = ucfirst($who) . ": $k left out (a ringtone it uses is missing)";
 				} else {
 					$settings[$k] = $v2;
+				}
+				continue;
+			} elseif ($type === 'phonebook' && ctype_digit($v)) {
+				$groups ??= array_column($this->svc->phonebooks(), 'id');
+				if (!in_array((int) $v, $groups, true)) {
+					unset($settings[$k]);
+					$r['warnings'][] = ucfirst($who) . ": $k left out (Contact Manager group $v doesn't exist on this PBX)";
 				}
 				continue;
 			} elseif ($type === 'vpn' && ctype_digit($v)) {

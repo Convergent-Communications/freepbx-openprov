@@ -477,6 +477,8 @@ class ConfigBuilder
 			$urls['vpn'] = $this->baseUrl($onTunnel ? $network : $directNetwork, $creds) . '/' . $device['mac'] . '-vpn.tar' . $ver;
 		}
 
+		$phonebooks = $this->phonebooks($device, $s, $assetBase);
+
 		$multicast = [];
 		foreach (preg_split('/\r\n|\r|\n/', (string) ($s['multicast'] ?? '')) as $line) {
 			$line = trim($line);
@@ -516,8 +518,104 @@ class ConfigBuilder
 			'features' => $this->featureLines($s, $model, $keys, $device, $primaryExt, $this->hostFor($network)),
 			'distinctive' => $distinctive,
 			'distinctive_managed' => trim((string) ($s['distinctive_ring'] ?? '')) !== '',
+			'phonebooks' => $phonebooks,
+			'caller_photos' => $this->callerPhotoSetting($s, $model, $vpnClient !== null && $vpnUnavailable === null),
 			'expansion_used' => (int) ($device['settings']['expansion_modules'] ?? 0) > 0,
 		];
+	}
+
+	private ?CallerPhotos $photos = null;
+
+	public function callerPhotos(): CallerPhotos
+	{
+		return $this->photos ??= new CallerPhotos($this->settings, $this->vpn, $this, $this->pbx);
+	}
+
+	/**
+	 * Show caller photos ('1' / '0'), or null to leave the phone's setting
+	 * alone. Setting caller_photo: explicit Yes/No, or blank = yes on a color
+	 * model with a working VPN profile while caller photos are on (the photo
+	 * URL is the tunnel address; nothing else can fetch it).
+	 */
+	public function callerPhotoSetting(array $s, array $model, bool $onVpn): ?string
+	{
+		$v = trim((string) ($s['caller_photo'] ?? ''));
+		if ($v === '0' || $v === '1') {
+			return $v;
+		}
+		return $onVpn && !empty($model['wallpaper']) && $this->callerPhotos()->enabled() ? '1' : null;
+	}
+
+	/** Remote phonebook slots (Yealink has five: remote_phonebook.data.1-5). */
+	public const PHONEBOOK_SLOTS = 5;
+
+	/**
+	 * Remote phonebooks from Contact Manager (settings phonebook_1..5: a
+	 * group id, 'off', or blank = not managed). ['managed' => bool, 'books'
+	 * => [slot => ['group', 'name', 'url']]]. Managed once any slot is set,
+	 * and then every slot is written, so books removed here leave the phone.
+	 *
+	 * The URL carries the phone's own credential, because the phone sends no
+	 * credential for a phonebook unless the URL holds one (measured on the
+	 * T87W, 2026-11-19), and ?v=<content hash>, so a Contact Manager edit
+	 * changes the config: the 5-minute sync tells the phone, and a new URL
+	 * makes it download the book at once rather than at its next refresh.
+	 */
+	public function phonebooks(array $device, array $s, string $assetBase): array
+	{
+		$out = ['managed' => false, 'books' => []];
+		for ($slot = 1; $slot <= self::PHONEBOOK_SLOTS; $slot++) {
+			$v = trim((string) ($s["phonebook_$slot"] ?? ''));
+			if ($v === '') {
+				continue;
+			}
+			$out['managed'] = true;
+			if (!ctype_digit($v) || !($book = $this->phonebook($device, (int) $v))) {
+				continue; // 'off', or the group is gone: the slot is cleared
+			}
+			$out['books'][$slot] = [
+				'group' => (int) $v,
+				'name' => $book['name'],
+				'url' => "$assetBase/pb/$v.xml?v=" . substr(sha1($book['xml']), 0, 12),
+			];
+		}
+		return $out;
+	}
+
+	/**
+	 * A Contact Manager group as this phone's brand formats a phonebook:
+	 * ['name', 'xml'], or null when the group doesn't exist.
+	 */
+	public function phonebook(array $device, int $groupId): ?array
+	{
+		$group = null;
+		foreach ($this->pbx->contactGroups() as $g) {
+			if ($g['id'] === $groupId) {
+				$group = $g;
+				break;
+			}
+		}
+		$entries = $group ? $this->pbx->contactBook($groupId) : null;
+		if ($entries === null) {
+			return null;
+		}
+		$name = Util::xmlText($group['name'], 32);
+		return ['name' => $name, 'xml' => $this->brand($device['brand'])->phonebook($name, $entries)];
+	}
+
+	/**
+	 * The phonebook a phone asked for (/pb/<group>.xml), only when one of its
+	 * phonebook slots names that group. null = not one of its books.
+	 */
+	public function phonebookForDevice(array $device, int $groupId): ?array
+	{
+		$s = $this->effectiveSettings($device);
+		for ($slot = 1; $slot <= self::PHONEBOOK_SLOTS; $slot++) {
+			if (trim((string) ($s["phonebook_$slot"] ?? '')) === (string) $groupId) {
+				return $this->phonebook($device, $groupId);
+			}
+		}
+		return null;
 	}
 
 	/**

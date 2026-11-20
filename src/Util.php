@@ -97,6 +97,20 @@ final class Util
 		return str_replace(["\r", "\n"], ' ', $v);
 	}
 
+	/**
+	 * Text a phone's XML parser accepts: valid UTF-8 (bad bytes replaced),
+	 * no control characters (XML 1.0 forbids most; one bad character makes
+	 * the phone reject the whole file), whitespace runs collapsed, at most
+	 * $max characters.
+	 */
+	public static function xmlText(string $s, int $max = 99): string
+	{
+		$s = mb_scrub($s, 'UTF-8');
+		$s = preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $s) ?? '';
+		$s = trim(preg_replace('/\s+/u', ' ', $s) ?? '');
+		return mb_substr($s, 0, $max, 'UTF-8');
+	}
+
 	/** Expand a label format: {name} {first} {last} {ext}. */
 	public static function label(string $format, string $ext, string $name, ?string $first = null, ?string $last = null): string
 	{

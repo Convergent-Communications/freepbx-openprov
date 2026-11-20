@@ -22,9 +22,10 @@ class ProvisionServer
 
 	/**
 	 * $secure: the request came over HTTPS. $port: the TCP port it arrived on
-	 * (htdocs/index.php; 0 = unknown).
+	 * (htdocs/index.php; 0 = unknown). $local: the PBX address it reached
+	 * ('' = unknown).
 	 */
-	public function handle(string $path, string $ua, string $ip, ?string $user, ?string $pass, bool $secure = true, int $port = 443): array
+	public function handle(string $path, string $ua, string $ip, ?string $user, ?string $pass, bool $secure = true, int $port = 443, string $local = ''): array
 	{
 		$path = '/' . ltrim(rawurldecode(parse_url($path, PHP_URL_PATH) ?? '/'), '/');
 		$log = ['ip' => $ip, 'ua' => $ua, 'path' => $path];
@@ -60,6 +61,43 @@ class ProvisionServer
 			}
 			$log['mac'] = $device['mac'];
 			return $this->asset($m[1], (int) $m[2], $m[3], $log);
+		}
+
+		// Remote phonebook: /pb/<Contact Manager group>.xml (?v= is only there
+		// to change the URL when the book changes). A phone gets only the
+		// groups its own phonebook settings name.
+		if (preg_match('#^/pb/(\d{1,9})\.xml$#', $path, $m)) {
+			$device = $this->authAny($user, $pass);
+			if (!$device) {
+				return $user === null ? $this->challenge($log, 'phonebook auth required') : $this->deny(401, 'phonebook auth failed', $log, true);
+			}
+			$log['mac'] = $device['mac'];
+			try {
+				$book = $this->builder->phonebookForDevice($device, (int) $m[1]);
+			} catch (\Throwable $e) {
+				return $this->deny(500, 'phonebook failed: ' . $e->getMessage(), $log);
+			}
+			if (!$book) {
+				return $this->deny(404, "phonebook {$m[1]} not set for this phone", $log);
+			}
+			$this->store->logEvent($log + ['status' => 200, 'detail' => "phonebook {$m[1]}"]);
+			return ['status' => 200, 'headers' => ['Content-Type' => 'text/xml; charset=utf-8', 'Cache-Control' => 'no-store'], 'body' => $book['xml']];
+		}
+
+		// Caller photo: /photo/<number>-<token>.jpg, the Call-Info icon FreePBX
+		// sends ringing phones (CallerPhotos). No credential (the URL is shared
+		// by every phone a call rings): from a VPN tunnel address, to the
+		// PBX's tunnel address, with the number's token. Served and missing photos aren't logged: that would be
+		// an event for every phone on every call.
+		if (preg_match('#^/photo/(\d{2,20})-([0-9a-f]{16})\.jpg$#', $path, $m)) {
+			$r = $this->builder->callerPhotos()->serve($m[1], $m[2], $ip, $local);
+			if ($r['status'] !== 200) {
+				if (str_starts_with($r['why'], 'no photo')) {
+					return ['status' => 404, 'headers' => ['Cache-Control' => 'no-store'], 'body' => ''];
+				}
+				return ['body' => ''] + $this->deny(404, $r['why'], $log);
+			}
+			return ['status' => 200, 'headers' => ['Content-Type' => 'image/jpeg', 'Cache-Control' => 'private, max-age=300'], 'body' => $r['body']];
 		}
 
 		// VPN profile: /<mac>-vpn.tar

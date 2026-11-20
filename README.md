@@ -10,6 +10,8 @@ built to be driven by people (GUI) and by software (CLI and GraphQL).
 - **Feature-code keys with live state:** time conditions, call flows, follow-me/DND/call-forward toggles, park slots. A catalog of everything the PBX can light up.
 - **Layered templates:** parent template → template → phone. Data-driven settings, plus raw `key = value` lines for everything else.
 - **System Admin VPN:** OpenVPN profiles built from System Admin's clients.
+- **Phonebooks from Contact Manager:** up to five Contact Manager groups as the phone's remote phonebooks, with caller names on incoming calls. Edits reach phones within about 5 minutes, no Apply Config.
+- **Caller photos:** ringing phones show the caller's Contact Manager photo (users and shared contacts). Served over the VPN tunnel only (setting `caller_photos`, `docs/DESIGN.md` D10e).
 - **Files:** wallpapers (resized per model), ringtones, firmware.
 - **Phone screenshots:** the phone page's Screen tab shows the live screen. The PBX fetches it, so it works for VPN phones too. The phone accepts the request only from the PBX's own addresses.
 - **Automatic updates.** Phones update via SIP check-sync, including over the VPN. Tunnel-bound models (T87W) provision through the tunnel (see `docs/YEALINK-VPN-ISSUE.md`). A web-API reboot is available as an option.

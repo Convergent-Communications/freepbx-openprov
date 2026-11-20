@@ -236,6 +236,32 @@ class Yealink implements Brand
 			$b['openvpn.url'] = $ctx['urls']['vpn'];
 		}
 
+		// Remote phonebooks: all five slots once managed; %NULL% clears a slot
+		// (checked on the T87W, 2026-11-19).
+		if (!empty($ctx['phonebooks']['managed'])) {
+			for ($n = 1; $n <= 5; $n++) {
+				$book = $ctx['phonebooks']['books'][$n] ?? null;
+				$b["remote_phonebook.data.$n.url"] = $book ? $book['url'] : '%NULL%';
+				$b["remote_phonebook.data.$n.name"] = $book ? $book['name'] : '%NULL%';
+			}
+		}
+		// Caller names from the books: phonebook_lookup when set, else on
+		// once there is a book (blank and no book: the phone's own value).
+		$lookup = trim((string) ($ctx['settings']['phonebook_lookup'] ?? ''));
+		if ($lookup === '0' || $lookup === '1') {
+			$b['features.remote_phonebook.enable'] = $lookup;
+		} elseif (!empty($ctx['phonebooks']['books'])) {
+			$b['features.remote_phonebook.enable'] = '1';
+		}
+
+		// Caller photos: the phone fetches the Call-Info icon FreePBX sends
+		// with the INVITE (CallerPhotos). Per account; null = left alone.
+		if (($ctx['caller_photos'] ?? null) !== null) {
+			foreach ($ctx['accounts'] as $a) {
+				$b['account.' . (int) $a['account'] . '.picture_info_enable'] = $ctx['caller_photos'];
+			}
+		}
+
 		// Dial-now rules
 		$rules = array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', (string) ($ctx['settings']['dialnow'] ?? '')))));
 		foreach ($rules as $i => $rule) {
@@ -310,6 +336,32 @@ class Yealink implements Brand
 			$out .= $key . ' = ' . Util::cfgValue((string) $v) . "\n";
 		}
 		return $out;
+	}
+
+	/** Contact Manager number types → the label the phone shows. */
+	private const NUMBER_LABELS = [
+		'internal' => 'Extension', 'work' => 'Work', 'cell' => 'Mobile', 'home' => 'Home', 'fax' => 'Fax', 'other' => 'Other',
+	];
+
+	/**
+	 * Remote phonebook XML (remote_phonebook.data.N.url). The flat
+	 * <YealinkIPPhoneDirectory> form: any number of labelled numbers per
+	 * contact, where <YealinkIPPhoneBook>'s Unit allows three.
+	 */
+	public function phonebook(string $title, array $entries): string
+	{
+		$x = fn(string $s) => htmlspecialchars(Util::xmlText($s), ENT_XML1 | ENT_QUOTES, 'UTF-8');
+		$out = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<YealinkIPPhoneDirectory>\n";
+		$out .= '<Title>' . $x($title) . "</Title>\n";
+		foreach ($entries as $e) {
+			$out .= '<DirectoryEntry><Name>' . $x((string) $e['name']) . '</Name>';
+			foreach ($e['numbers'] as $n) {
+				$label = self::NUMBER_LABELS[$n['type'] ?? ''] ?? 'Other';
+				$out .= '<Telephone label="' . $x($label) . '">' . $x((string) $n['number']) . '</Telephone>';
+			}
+			$out .= "</DirectoryEntry>\n";
+		}
+		return $out . "</YealinkIPPhoneDirectory>\n";
 	}
 
 	public function common(array $ctx): string

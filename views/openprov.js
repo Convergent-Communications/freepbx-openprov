@@ -77,10 +77,10 @@
 	const cache = {};
 	async function lookups() {
 		if (!cache.models) {
-			const [models, schema, keytypes, targets, extensions, templates, assets, vpn, builtin] = await Promise.all([
-				api('models'), api('schema'), api('keytypes'), api('targets'), api('extensions'), api('templates.list'), api('assets.list'), api('vpn.clients'), api('ringtones.builtin'),
+			const [models, schema, keytypes, targets, extensions, templates, assets, vpn, builtin, phonebooks] = await Promise.all([
+				api('models'), api('schema'), api('keytypes'), api('targets'), api('extensions'), api('templates.list'), api('assets.list'), api('vpn.clients'), api('ringtones.builtin'), api('phonebooks'),
 			]);
-			Object.assign(cache, { models, schema, keytypes, targets, extensions, templates, assets, vpn, builtin });
+			Object.assign(cache, { models, schema, keytypes, targets, extensions, templates, assets, vpn, builtin, phonebooks });
 		}
 		return cache;
 	}
@@ -182,7 +182,7 @@
 			const opt = (val, label, sel) => `<option value="${esc(val)}" ${sel ? 'selected' : ''}>${esc(label)}</option>`;
 			if (s.type === 'select' || s.type === 'bool') {
 				input = `<select class="form-control form-control-sm" ${name}>${opt('', inhOpt, v === '')}${selectOptions(s).map((o) => opt(o.value, o.label, String(v) === String(o.value))).join('')}</select>`;
-			} else if (s.type.startsWith('asset:') || s.type === 'vpn') {
+			} else if (s.type.startsWith('asset:') || s.type === 'vpn' || s.type === 'phonebook') {
 				input = `<select class="form-control form-control-sm" ${name}>${opt('', inhOpt, v === '')}${selectOptions(s).map((o) => opt(o.value, o.label, String(v) === String(o.value))).join('')}</select>`;
 			} else if (s.type === 'ringtone') {
 				input = `<div class="input-group input-group-sm"><select class="form-control form-control-sm" ${name}>${opt('', inhOpt, v === '')}${ringtoneOptionsHtml(String(v), false)}</select>
@@ -217,6 +217,7 @@
 		if (s.type === 'bool') return [{ value: '1', label: 'Yes' }, { value: '0', label: 'No' }];
 		if (s.type === 'select') return s.options;
 		if (s.type === 'vpn') return [{ value: 'off', label: 'Off' }, { value: 'auto', label: "Auto (user's System Admin client)" }, ...cache.vpn.map((c) => ({ value: String(c.id), label: `Client ${c.id}: ${c.description}` }))];
+		if (s.type === 'phonebook') return [{ value: 'off', label: 'Off' }, ...cache.phonebooks.map((g) => ({ value: String(g.id), label: g.name + (g.type === 'private' ? ` (private${g.owner ? ', ' + g.owner : ''})` : g.type === 'internal' ? ' (PBX users)' : '') }))];
 		if (s.type === 'ringtone') return ringtoneChoices(false);
 		if (s.type.startsWith('asset:')) return cache.assets.filter((a) => a.kind === s.type.slice(6)).map((a) => ({ value: String(a.id), label: a.name + (a.version ? ' (' + a.version + ')' : '') }));
 		return [];
@@ -1068,6 +1069,7 @@
 		vpn_provisioning_host: 'Address VPN phones on tunnel-bound models (T87W on 185.87.x) provision from once their tunnel is up. Blank = the VPN server\'s tunnel address (e.g. 10.8.0.1). Never the VPN endpoint address: those phones can\'t reach it while connected.',
 		reboot_only_when_idle: 'Never reboot a phone that is on a call.',
 		reboot_window: 'Only reboot VPN phones inside this window, e.g. 01:00-05:00 (blank = any time).',
+		caller_photos: 'Show the caller\'s Contact Manager photo on ringing VPN phones (color Yealinks): the user\'s photo for an extension, a contact\'s from a shared group. FreePBX sends the phone a link with each call; photos are served over the VPN tunnel only, never to the LAN or the internet. Needs System Admin\'s VPN server. Apply Config after changing it. Per phone or template: setting "Caller photos".',
 	};
 	async function settings() {
 		const [s, info] = await Promise.all([api('settings.get', { reveal: true }), api('info')]);

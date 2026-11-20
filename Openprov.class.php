@@ -363,6 +363,25 @@ class Openprov extends \FreePBX_Helpers implements \BMO
 		return [];
 	}
 
+	/** Dialplan hook after core's (100), whose dial macros CallerPhotos splices into. */
+	public static function myDialplanHooks()
+	{
+		return 900;
+	}
+
+	/** Caller photos: the Call-Info header on calls that ring phones (DESIGN.md D10e). */
+	public function doDialplanHook(&$ext, $engine, $priority)
+	{
+		if ($engine !== 'asterisk') {
+			return;
+		}
+		try {
+			$this->parts()['builder']->callerPhotos()->dialplan($ext);
+		} catch (\Throwable $e) {
+			// Never break a reload.
+		}
+	}
+
 	/**
 	 * fwconsole start (boot): start OpenProv's HTTPS service if that's how
 	 * phones reach it. Uses the stored decision rather than re-detecting, in

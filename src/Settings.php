@@ -67,6 +67,9 @@ class Settings
 		'firewall_zones' => 'internal,other',
 		'reboot_only_when_idle' => true,
 		'reboot_window' => '',          // "HH:MM-HH:MM" (PBX local time); blank = any time
+		// Caller photos (CallerPhotos): FreePBX sends ringing phones a link to the
+		// caller's Contact Manager photo, served over the VPN tunnel only.
+		'caller_photos' => false,
 	];
 
 	/**

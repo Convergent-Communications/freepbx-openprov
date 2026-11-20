@@ -8,7 +8,7 @@ namespace FreePBX\modules\Openprov;
  */
 class Service
 {
-	public const VERSION = '0.3.1';
+	public const VERSION = '0.4.0';
 	private bool $deferSync = false;
 
 	public function __construct(
@@ -59,6 +59,7 @@ class Service
 	{
 		$webKeys = ['phone_scheme', 'https_mode', 'https_port', 'http_port', 'service_port', 'firewall_zones'];
 		$before = array_map(fn ($k) => $this->settings->get($k), $webKeys);
+		$photosBefore = $this->photoDialplan();
 		foreach ($values as $k => $v) {
 			if ($k === 'internal_host_effective' || $v === '********') {
 				continue;
@@ -68,8 +69,18 @@ class Service
 		if (array_map(fn ($k) => $this->settings->get($k), $webKeys) !== $before) {
 			$this->web->resolve(); // may move phones between FreePBX's HTTPS and OpenProv's service
 		}
+		if ($this->photoDialplan() !== $photosBefore && function_exists('needreload')) {
+			needreload(); // the caller photo dialplan changed: FreePBX shows Apply Config
+		}
 		$this->afterChange();
 		return $this->getSettings();
+	}
+
+	/** What the caller photo dialplan depends on ('' = none written). */
+	private function photoDialplan(): string
+	{
+		$p = $this->builder->callerPhotos();
+		return $p->enabled() ? $p->baseUrl() . '|' . $p->key() : '';
 	}
 
 	public function models(?string $brand = null): array
@@ -313,6 +324,12 @@ class Service
 		}
 		usort($out, fn($a, $b) => $a['days_left'] <=> $b['days_left']);
 		return $out;
+	}
+
+	/** Contact Manager groups phonebook settings can name: [{id, name, type, owner}]. */
+	public function phonebooks(): array
+	{
+		return $this->pbx->contactGroups();
 	}
 
 	public function vpnClients(): array
@@ -2070,6 +2087,13 @@ class Service
 			}
 			if ($def['type'] === 'vpn' && !in_array($v, ['off', 'auto'], true) && !ctype_digit($v)) {
 				throw new \InvalidArgumentException("'vpn' must be off, auto or a client id");
+			}
+			if ($def['type'] === 'phonebook') {
+				$v = strtolower(trim($v)) === 'off' ? 'off' : trim($v);
+				$known = ctype_digit($v) && in_array((int) $v, array_column($this->pbx->contactGroups(), 'id'), true);
+				if ($v !== 'off' && !$known) {
+					throw new \InvalidArgumentException("'$k' must be 'off' or a Contact Manager group id (phonebooks lists them)");
+				}
 			}
 			if ($def['type'] === 'number' && ((isset($def['min']) && $v < $def['min']) || (isset($def['max']) && $v > $def['max']))) {
 				throw new \InvalidArgumentException("'$k' must be between {$def['min']} and {$def['max']}");

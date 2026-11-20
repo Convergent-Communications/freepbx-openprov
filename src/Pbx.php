@@ -108,6 +108,8 @@ class Pbx
 		$this->userCache = null;
 		$this->usermanCache = null;
 		$this->hintCache = null;
+		$this->groupCache = null;
+		$this->bookCache = [];
 	}
 
 	public function displayName(string $ext): ?string
@@ -508,6 +510,153 @@ class Pbx
 			];
 		}
 		return $out;
+	}
+
+	/**
+	 * Contact Manager groups: [['id', 'name', 'type', 'owner']], by name.
+	 * type is Contact Manager's: internal (User Management users), external
+	 * (shared contacts) or private (one user's own); owner is the owning
+	 * user's username for private groups, else ''. Empty without the module.
+	 */
+	public function contactGroups(): array
+	{
+		if ($this->groupCache !== null) {
+			return $this->groupCache;
+		}
+		$cm = $this->contactManager();
+		if (!$cm) {
+			return $this->groupCache = [];
+		}
+		try {
+			$groups = (array) $cm->getGroups();
+		} catch (\Throwable $e) {
+			return $this->groupCache = [];
+		}
+		$owners = [];
+		try {
+			foreach ($this->db->query('SELECT id, username FROM userman_users')->fetchAll(PDO::FETCH_ASSOC) as $u) {
+				$owners[(int) $u['id']] = (string) $u['username'];
+			}
+		} catch (\Throwable $e) {
+		}
+		$out = [];
+		foreach ($groups as $g) {
+			$owner = (int) ($g['owner'] ?? -1);
+			$out[] = [
+				'id' => (int) $g['id'],
+				'name' => (string) $g['name'],
+				'type' => (string) ($g['type'] ?? ''),
+				'owner' => $owner > 0 ? ($owners[$owner] ?? (string) $owner) : '',
+			];
+		}
+		usort($out, fn($a, $b) => strnatcasecmp($a['name'], $b['name']) ?: $a['id'] <=> $b['id']);
+		return $this->groupCache = $out;
+	}
+
+	/** Contact Manager reads for this request (every phone's render uses them). */
+	private ?array $groupCache = null;
+	private array $bookCache = [];
+
+	/**
+	 * A Contact Manager group's entries as a phone directory:
+	 * [['name', 'numbers' => [['number', 'type']]]], sorted by name. Entries
+	 * without a dialable number are left out. Names: display name, else first
+	 * and last name, else company, else the FreePBX name of an extension
+	 * number, else the first number (User Management entries often have no
+	 * name of their own). Numbers: Contact Manager's digits-only form when it
+	 * has one, so incoming calls match. null = no such group.
+	 */
+	public function contactBook(int $groupId): ?array
+	{
+		if (array_key_exists($groupId, $this->bookCache)) {
+			return $this->bookCache[$groupId];
+		}
+		$cm = $this->contactManager();
+		if (!$cm || !in_array($groupId, array_column($this->contactGroups(), 'id'), true)) {
+			return $this->bookCache[$groupId] = null;
+		}
+		try {
+			$entries = (array) $cm->getEntriesByGroupID($groupId);
+		} catch (\Throwable $e) {
+			return $this->bookCache[$groupId] = null;
+		}
+		$exts = $this->extensions();
+		$out = [];
+		foreach ($entries as $e) {
+			$numbers = [];
+			foreach ((array) ($e['numbers'] ?? []) as $n) {
+				$num = trim((string) (($n['stripped'] ?? '') !== '' ? $n['stripped'] : ($n['number'] ?? '')));
+				if ($num === '' || !preg_match('/^[+*#0-9A-Za-z@._-]+$/', $num)) {
+					continue;
+				}
+				$numbers[$num] ??= ['number' => $num, 'type' => strtolower(trim((string) ($n['type'] ?? '')))];
+			}
+			if (!$numbers) {
+				continue;
+			}
+			$name = trim((string) ($e['displayname'] ?? ''));
+			if ($name === '') {
+				$name = trim(trim((string) ($e['fname'] ?? '')) . ' ' . trim((string) ($e['lname'] ?? '')));
+			}
+			if ($name === '') {
+				$name = trim((string) ($e['company'] ?? ''));
+			}
+			if ($name === '') {
+				foreach ($numbers as $n) {
+					if (($exts[$n['number']]['name'] ?? '') !== '') {
+						$name = $exts[$n['number']]['name'];
+						break;
+					}
+				}
+			}
+			if ($name === '') {
+				$name = reset($numbers)['number']; // not the key: PHP makes "7775550000" an int
+			}
+			$out[] = ['name' => $name, 'numbers' => array_values($numbers)];
+		}
+		usort($out, fn($a, $b) => strnatcasecmp($a['name'], $b['name']));
+		return $this->bookCache[$groupId] = $out;
+	}
+
+	/**
+	 * The caller's Contact Manager photo, as stored (PNG/JPEG bytes), or null.
+	 * Uses Contact Manager's own global lookup (its number matching, the
+	 * user's photo for an extension, contacts in shared groups); private
+	 * groups are never searched.
+	 */
+	public function callerPhoto(string $number): ?string
+	{
+		$cm = $this->contactManager();
+		if (!$cm || !method_exists($cm, 'lookupNumberByUserID')) {
+			return null;
+		}
+		try {
+			$e = $cm->lookupNumberByUserID(-1, $number);
+			if (!is_array($e)) {
+				return null;
+			}
+			$img = $e['image']['image'] ?? null;
+			if (!is_string($img) || $img === '') {
+				// Matched through its fuzzy pass, which returns the entry without its image.
+				$id = $e['id'] ?? null;
+				$full = $id !== null && method_exists($cm, 'getEntryByID') ? $cm->getEntryByID($id) : null;
+				$img = is_array($full) ? ($full['image']['image'] ?? null) : null;
+			}
+			return is_string($img) && $img !== '' ? $img : null;
+		} catch (\Throwable $e) {
+			return null;
+		}
+	}
+
+	/** FreePBX's Contact Manager module, or null when it isn't installed. */
+	private function contactManager(): ?object
+	{
+		try {
+			$cm = $this->freepbx?->Contactmanager;
+			return is_object($cm) && method_exists($cm, 'getGroups') ? $cm : null;
+		} catch (\Throwable $e) {
+			return null;
+		}
 	}
 
 	/** userman user id whose default extension is $ext. */

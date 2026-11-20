@@ -82,6 +82,8 @@ $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
 // Host header when that names a port, so on a box with several HTTPS ports a
 // client could name another one; DESIGN.md D3 ("Internet access") covers it.
 $port = (int) ($_SERVER['SERVER_PORT'] ?? 0);
+// The local address the connection reached (not the Host header).
+$local = (string) ($_SERVER['SERVER_ADDR'] ?? '');
 $proxyHeader = (string) ($_SERVER['HTTP_X_OPENPROV_PROXY'] ?? '');
 if ($proxyHeader !== '' && in_array($ip, ['127.0.0.1', '::1'], true)) {
 	$fwd = trim((string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ''));
@@ -94,10 +96,14 @@ if ($proxyHeader !== '' && in_array($ip, ['127.0.0.1', '::1'], true)) {
 	// The service's own listening port (0 from an older service that doesn't
 	// send it: then internet addresses are refused).
 	$port = (int) ($_SERVER['HTTP_X_OPENPROV_PORT'] ?? 0);
+	// ...and the address it reached ('' from an older service: then no
+	// caller photos).
+	$local = (string) ($_SERVER['HTTP_X_OPENPROV_LOCAL'] ?? '');
+	$local = filter_var($local, FILTER_VALIDATE_IP) === false ? '' : $local;
 }
 
 try {
-	$res = $openprov->provisionServer()->handle($path, (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), $ip, $user, $pass, $secure, $port);
+	$res = $openprov->provisionServer()->handle($path, (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), $ip, $user, $pass, $secure, $port, $local);
 } catch (\Throwable $e) {
 	error_log('OpenProv: ' . $e->getMessage());
 	$res = ['status' => 500, 'headers' => [], 'body' => "internal error\n"];

@@ -156,6 +156,52 @@ class FakePbx extends Pbx
 	{
 		return $ext === '212' ? 6 : null;
 	}
+
+	/** Contact Manager groups and their books (Pbx::contactGroups / contactBook shapes). */
+	public array $groups = [
+		['id' => 1, 'name' => 'User Manager Group', 'type' => 'internal', 'owner' => ''],
+		['id' => 3, 'name' => 'Customers & Vendors', 'type' => 'external', 'owner' => ''],
+	];
+	public array $books = [
+		1 => [['name' => 'Alice Smith', 'numbers' => [['number' => '201', 'type' => 'internal']]]],
+		3 => [['name' => 'Acme <Supply> "West"', 'numbers' => [['number' => '5551234567', 'type' => 'work'], ['number' => '5559876543', 'type' => 'cell']]]],
+	];
+
+	public function contactGroups(): array
+	{
+		return $this->groups;
+	}
+
+	public function contactBook(int $groupId): ?array
+	{
+		return in_array($groupId, array_column($this->groups, 'id'), true) ? ($this->books[$groupId] ?? []) : null;
+	}
+
+	/** Contact Manager photos by number (Pbx::callerPhoto). */
+	public array $photos = [];
+
+	public function callerPhoto(string $number): ?string
+	{
+		return $this->photos[$number] ?? null;
+	}
+}
+
+/** FreePBX's Contact Manager module, as Pbx reads it. */
+class FakeContactManager
+{
+	public function __construct(private array $groups, private array $entries)
+	{
+	}
+
+	public function getGroups()
+	{
+		return $this->groups;
+	}
+
+	public function getEntriesByGroupID($id)
+	{
+		return $this->entries[$id] ?? [];
+	}
 }
 
 class FakeVpn extends Vpn
@@ -1480,6 +1526,143 @@ $tests['pbx: ring groups are key targets (speed dial, no status light); no ringg
 	eq(['id' => 'rg:600', 'category' => 'ring_group', 'label' => '600 Sales', 'type' => 'speeddial', 'value' => '600', 'perExtension' => false, 'hint' => false, 'module' => 'ringgroups'], $rg[0]);
 };
 
+// ---- remote phonebooks (Contact Manager) -----------------------------------------
+
+$tests['phonebook: Yealink XML is escaped, labelled and valid'] = function () {
+	$xml = (new Yealink())->phonebook("Customers & Vendors", [
+		['name' => "Acme <Supply> \"West\"\x07 & Co", 'numbers' => [['number' => '5551234567', 'type' => 'work'], ['number' => '5559876543', 'type' => 'cell'], ['number' => '9', 'type' => 'weird']]],
+		['name' => "Bad \xC3\x28 UTF-8", 'numbers' => [['number' => '201', 'type' => 'internal']]],
+	]);
+	ok(str_starts_with($xml, '<?xml version="1.0" encoding="UTF-8"?>'));
+	$doc = new \DOMDocument();
+	ok(@$doc->loadXML($xml), 'well-formed XML');
+	eq('YealinkIPPhoneDirectory', $doc->documentElement->nodeName);
+	eq('Customers & Vendors', $doc->getElementsByTagName('Title')->item(0)->textContent);
+	$e = $doc->getElementsByTagName('DirectoryEntry');
+	eq(2, $e->length);
+	eq('Acme <Supply> "West" & Co', $e->item(0)->getElementsByTagName('Name')->item(0)->textContent, 'control character dropped, text intact');
+	$tel = $e->item(0)->getElementsByTagName('Telephone');
+	eq(['Work', 'Mobile', 'Other'], [$tel->item(0)->getAttribute('label'), $tel->item(1)->getAttribute('label'), $tel->item(2)->getAttribute('label')]);
+	eq('5551234567', $tel->item(0)->textContent);
+	ok(mb_check_encoding($xml, 'UTF-8'), 'invalid UTF-8 repaired');
+};
+
+$tests['phonebook: render manages all five slots, credential in the URL, caller names on'] = function () {
+	$w = world();
+	phone($w);
+	$render = fn() => kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+	$kv = $render();
+	ok(!isset($kv['remote_phonebook.data.1.url']) && !isset($kv['features.remote_phonebook.enable']), 'no phonebook settings: the phone keeps its own');
+
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['phonebook_1' => '3', 'phonebook_2' => 'off']]);
+	$kv = $render();
+	$pass = $w->store->deviceByMac(MAC)['prov_pass'];
+	ok(preg_match('#^https://' . MAC . ':' . preg_quote(rawurlencode($pass), '#') . '@192\.0\.2\.10/openprov/pb/3\.xml\?v=[0-9a-f]{12}$#', $kv['remote_phonebook.data.1.url']) === 1, 'own credential in the URL: ' . $kv['remote_phonebook.data.1.url']);
+	eq('Customers & Vendors', $kv['remote_phonebook.data.1.name']);
+	foreach ([2, 3, 4, 5] as $n) {
+		eq('%NULL%', $kv["remote_phonebook.data.$n.url"], "slot $n cleared");
+		eq('%NULL%', $kv["remote_phonebook.data.$n.name"]);
+	}
+	eq('1', $kv['features.remote_phonebook.enable'], 'caller names on by default with a book');
+	$masked = $w->svc->render(MAC)['text'];
+	ok(!str_contains($masked, $pass), 'render masks the credential in the phonebook URL');
+
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['phonebook_1' => '3', 'phonebook_lookup' => '0', 'phonebook_refresh' => '7200', 'phonebook_refresh_on_open' => '1']]);
+	$kv = $render();
+	eq('0', $kv['features.remote_phonebook.enable'], 'explicit off wins');
+	eq('7200', $kv['features.remote_phonebook.flash_time']);
+	eq('1', $kv['features.remote_phonebook.enter_update_enable']);
+
+	// A group that no longer exists: its slot is cleared, the rest still works.
+	$w->pbx->groups = array_values(array_filter($w->pbx->groups, fn($g) => $g['id'] !== 3));
+	$kv = $render();
+	eq('%NULL%', $kv['remote_phonebook.data.1.url']);
+};
+
+$tests['phonebook: a Contact Manager edit changes the config, so the sync pushes it'] = function () {
+	$w = world();
+	phone($w, ['settings' => ['phonebook_1' => '3']]);
+	$url = fn() => kv($w->builder->render($w->store->deviceByMac(MAC))['text'])['remote_phonebook.data.1.url'];
+	$before = $url();
+	eq($before, $url(), 'stable while nothing changes');
+	$w->pbx->books[3][] = ['name' => 'Zed', 'numbers' => [['number' => '5550001111', 'type' => 'home']]];
+	ok($url() !== $before, 'new ?v= after an edit');
+};
+
+$tests['server: phonebooks need the phone\'s own credential and serve only its own books'] = function () {
+	$w = world();
+	phone($w, ['settings' => ['phonebook_1' => '3']]);
+	$pass = $w->store->deviceByMac(MAC)['prov_pass'];
+	$get = fn(string $path, ?string $u, ?string $p) => $w->server->handle($path, UA, '192.0.2.50', $u, $p);
+	eq(401, $get('/pb/3.xml', null, null)['status'], 'challenge: the phone retries with the URL\'s credential');
+	eq(401, $get('/pb/3.xml', MAC, 'wrong')['status']);
+	eq(401, $get('/pb/3.xml', 'boot', 'bootpass')['status'], 'not the shared bootstrap credential');
+	$r = $get('/pb/3.xml?v=abc', MAC, $pass);
+	eq(200, $r['status']);
+	eq('text/xml; charset=utf-8', $r['headers']['Content-Type']);
+	ok(str_contains($r['body'], '<Name>Acme &lt;Supply&gt; &quot;West&quot;</Name>'));
+	eq(404, $get('/pb/1.xml', MAC, $pass)['status'], 'a group this phone was not given');
+	eq(404, $get('/pb/99.xml', MAC, $pass)['status']);
+	$ev = $w->store->events(5);
+	eq('phonebook 3', $ev[array_search(200, array_column($ev, 'status'))]['detail']);
+};
+
+$tests['phonebook: settings take off or a known group; import drops groups this PBX lacks'] = function () {
+	$w = world();
+	phone($w);
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['phonebook_1' => 'OFF']]);
+	eq('off', $w->store->deviceByMac(MAC)['settings']['phonebook_1']);
+	throws(fn() => $w->svc->saveDevice(['mac' => MAC, 'settings' => ['phonebook_1' => '99']]), 'Contact Manager group');
+	throws(fn() => $w->svc->saveDevice(['mac' => MAC, 'settings' => ['phonebook_1' => 'Sales']]), 'Contact Manager group');
+	eq([1, 3], array_column((new \FreePBX\modules\Openprov\Api($w->svc, 'admin'))->call('phonebooks', []), 'id'));
+
+	$w->svc->saveTemplate(['name' => 'Books', 'settings' => ['phonebook_1' => '3', 'phonebook_2' => '1']]);
+	$doc = $w->svc->exportConfig([]);
+	$w2 = world();
+	$w2->pbx->groups = [['id' => 1, 'name' => 'User Manager Group', 'type' => 'internal', 'owner' => '']];
+	$r = $w2->svc->importConfig($doc, ['dryRun' => false]);
+	$t = $w2->svc->getTemplate('Books');
+	eq(['phonebook_2' => '1'], array_intersect_key($t['settings'], ['phonebook_1' => 1, 'phonebook_2' => 1]));
+	ok((bool) array_filter($r['warnings'], fn($m) => str_contains($m, 'phonebook_1 left out')), 'warned: ' . json_encode($r['warnings']));
+};
+
+$tests['pbx: Contact Manager books: name fallbacks, digits-only numbers, no-number entries skipped'] = function () {
+	$db = new PDO('sqlite::memory:');
+	$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+	$db->exec('CREATE TABLE users (extension TEXT, name TEXT)');
+	$db->exec('CREATE TABLE devices (id TEXT, tech TEXT)');
+	$db->exec('CREATE TABLE userman_users (id INTEGER, username TEXT)');
+	$db->exec("INSERT INTO users VALUES ('200', 'Front Desk')");
+	$db->exec("INSERT INTO userman_users VALUES (6, 'matthew')");
+	$num = fn(string $n, string $type, ?string $stripped = null) => ['number' => $n, 'stripped' => $stripped ?? $n, 'type' => $type];
+	$cm = new FakeContactManager(
+		[['id' => 1, 'owner' => -1, 'name' => 'User Manager Group', 'type' => 'internal'], ['id' => 4, 'owner' => 6, 'name' => 'My Contacts', 'type' => 'private']],
+		[1 => [
+			['displayname' => '', 'fname' => '', 'lname' => '', 'company' => '', 'numbers' => [$num('200', 'internal')]],
+			['displayname' => 'Baeo', 'fname' => 'Benya', 'lname' => 'Wilson', 'numbers' => [$num('201', 'internal')]],
+			['displayname' => '', 'fname' => 'Ann', 'lname' => 'Lee', 'numbers' => [$num('(555) 123-4567', 'cell', '5551234567'), $num('5551234567', 'work')]],
+			['displayname' => '', 'fname' => '', 'lname' => '', 'company' => 'Acme', 'numbers' => [$num('8005550100', 'work')]],
+			['displayname' => '', 'fname' => '', 'lname' => '', 'company' => '', 'numbers' => [$num('7775550000', 'other')]],
+			['displayname' => 'Nobody', 'numbers' => []],
+		]]
+	);
+	$pbx = new Pbx($db, (object) ['Contactmanager' => $cm]);
+	eq([
+		['id' => 4, 'name' => 'My Contacts', 'type' => 'private', 'owner' => 'matthew'],
+		['id' => 1, 'name' => 'User Manager Group', 'type' => 'internal', 'owner' => ''],
+	], $pbx->contactGroups());
+	eq([
+		['name' => '7775550000', 'numbers' => [['number' => '7775550000', 'type' => 'other']]],
+		['name' => 'Acme', 'numbers' => [['number' => '8005550100', 'type' => 'work']]],
+		['name' => 'Ann Lee', 'numbers' => [['number' => '5551234567', 'type' => 'cell']]],
+		['name' => 'Baeo', 'numbers' => [['number' => '201', 'type' => 'internal']]],
+		['name' => 'Front Desk', 'numbers' => [['number' => '200', 'type' => 'internal']]],
+	], $pbx->contactBook(1));
+	eq(null, $pbx->contactBook(99), 'no such group');
+	eq([], (new Pbx($db, null))->contactGroups(), 'no Contact Manager module');
+	eq(null, (new Pbx($db, null))->contactBook(1));
+};
+
 // ---- HTTPS: FreePBX's own, else OpenProv's service ------------------------------
 
 class FakePm2
@@ -1646,7 +1829,8 @@ $tests['web: /_ping needs OpenProv\'s token; the module directory is closed; the
 	ok(str_contains((string) file_get_contents("$root/src/Web.php"), "self::PING_HEADER . ': ' . self::pingToken("), 'the probe sends it');
 	$tls = (string) file_get_contents("$root/node/tls-service.js");
 	ok(str_contains($tls, "headers['x-openprov-port'] = String(req.socket.localPort"), 'the HTTPS service names its port');
-	ok(str_contains($tls, "['x-forwarded-for', 'x-openprov-proxy', 'x-openprov-port'].includes(k)"), 'clients cannot supply proxy headers');
+	ok(str_contains($tls, "['x-forwarded-for', 'x-openprov-proxy', 'x-openprov-port', 'x-openprov-local'].includes(k)"), 'clients cannot supply proxy headers');
+	ok(str_contains($tls, "headers['x-openprov-local'] = String(req.socket.localAddress"), 'the HTTPS service names the address it was reached on');
 	$ht = (string) file_get_contents("$root/.htaccess");
 	ok(str_contains($ht, 'Require all denied') && str_contains($ht, 'RewriteRule ^ - [F]') && str_contains($ht, '<FilesMatch ".*">'), 'module .htaccess denies everything');
 	ok(!is_dir("$root/assets"), 'no assets/ directory for FreePBX to link');
@@ -1832,6 +2016,128 @@ $tests['exchange: credentials only when exported and asked for; bad rows fail al
 	ok(!$admin->call('config.import', ['upload' => 'bbbbbbbbbbbbbbbb', 'dryRun' => false])['dryRun']);
 	ok(!is_file($part('bbbbbbbbbbbbbbbb')), 'imported: removed');
 	throws(fn() => $admin->call('upload.discard', ['id' => '../../etc']), 'Bad upload id');
+};
+
+/** FreePBX's extensions object (the parts CallerPhotos uses), recording what it is given. */
+class FakeExt
+{
+	public array $_exts = [];
+	public array $added = [];
+	public array $spliced = [];
+
+	public function add($section, $extension, $tag, $cmd): void
+	{
+		$this->added[] = [$section, $extension, $tag, $cmd];
+		$this->_exts[$section][' ' . $extension . ' '][] = ['tag' => $tag, 'cmd' => $cmd];
+	}
+
+	public function splice($section, $extension, $priority, $cmd): void
+	{
+		$this->spliced[] = [$section, $priority, $cmd];
+	}
+}
+
+function fakeExtClasses(): void
+{
+	foreach (['ext_gosub', 'ext_gotoif', 'ext_set', 'ext_return', 'ext_execif'] as $c) {
+		if (!class_exists($c, false)) {
+			eval("class $c { public array \$args; function __construct(...\$a) { \$this->args = \$a; } }");
+		}
+	}
+}
+
+function photoPng(int $w, int $h): string
+{
+	$im = imagecreatetruecolor($w, $h);
+	imagefill($im, 0, 0, imagecolorallocate($im, 200, 30, 30));
+	ob_start();
+	imagepng($im);
+	return (string) ob_get_clean();
+}
+
+$tests['caller photos: VPN phones on color models get picture_info_enable, others are left alone'] = function () {
+	$w = world();
+	phone($w, ['settings' => ['vpn' => 'auto']]);
+	$cfg = fn() => kv($w->builder->render($w->store->deviceByMac(MAC))['text']);
+	ok(!isset($cfg()['account.1.picture_info_enable']), 'off by default');
+	$w->settings->set('caller_photos', true);
+	eq('1', $cfg()['account.1.picture_info_enable'] ?? null, 'on: VPN phone');
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['vpn' => 'off']]);
+	ok(!isset($cfg()['account.1.picture_info_enable']), 'not on the VPN: left alone (it could not fetch the photo)');
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['vpn' => 'auto', 'caller_photo' => '0']]);
+	eq('0', $cfg()['account.1.picture_info_enable'] ?? null, 'explicit No');
+	$w->settings->set('caller_photos', false);
+	$w->svc->saveDevice(['mac' => MAC, 'settings' => ['vpn' => 'off', 'caller_photo' => '1']]);
+	eq('1', $cfg()['account.1.picture_info_enable'] ?? null, 'explicit Yes wins');
+};
+
+$tests['caller photos: served to VPN addresses with the number\'s token only, as a square JPEG'] = function () {
+	$w = world();
+	$w->settings->set('device_secret', 'secret-one');
+	$w->pbx->photos['201'] = photoPng(300, 200);
+	$p = $w->builder->callerPhotos();
+	$path = fn(string $n) => parse_url($p->url($n), PHP_URL_PATH);
+	$get = fn(string $path, string $ip, string $local = '10.8.0.1') => $w->server->handle(substr($path, strlen('/openprov')), '', $ip, null, null, true, 443, $local);
+	ok(str_starts_with($p->url('201'), 'https://10.8.0.1'), 'the tunnel address: ' . $p->url('201'));
+	eq(404, $get($path('201'), '10.8.0.5')['status'], 'off: nothing served');
+	$w->settings->set('caller_photos', true);
+	$r = $get($path('201'), '10.8.0.5');
+	eq(200, $r['status']);
+	eq('image/jpeg', $r['headers']['Content-Type']);
+	$img = imagecreatefromstring($r['body']);
+	eq([200, 200], [imagesx($img), imagesy($img)], 'center-cropped square');
+	eq(404, $get($path('201'), '192.168.1.50')['status'], 'LAN address: VPN only');
+	eq('', $get($path('201'), '192.168.1.50')['body']);
+	eq(404, $get($path('201'), '8.8.8.8')['status'], 'internet');
+	eq(404, $get($path('201'), '10.8.0.5', '192.168.1.31')['status'], 'from a VPN address but to the LAN address (overlapping subnet)');
+	eq(404, $get($path('201'), '10.8.0.5', '')['status'], 'local address unknown: refused');
+	eq(404, $get('/photo/201-' . str_repeat('0', 16) . '.jpg', '10.8.0.5')['status'], 'wrong token');
+	eq(404, $get(str_replace('201-', '202-', $path('201')), '10.8.0.5')['status'], 'another number\'s token');
+	eq(404, $get($path('5551234567'), '10.8.0.5')['status'], 'no photo for the number');
+	$w->pbx->photos['202'] = 'not an image';
+	eq(404, $get($path('202'), '10.8.0.5')['status'], 'unreadable image');
+	$w->settings->set('device_secret', 'secret-two');
+	eq(404, $get('/photo/201-' . substr(sha1(hash_hmac('sha256', 'openprov caller photo', 'secret-one') . ':201'), 0, 16) . '.jpg', '10.8.0.5')['status'], 'a new device_secret retires old URLs');
+};
+
+$tests['caller photos: dialplan sets the header for phone legs and drops it on trunks'] = function () {
+	fakeExtClasses();
+	$w = world();
+	$p = $w->builder->callerPhotos();
+	$ext = new FakeExt();
+	ok(!$p->dialplan($ext), 'off: no dialplan');
+	eq([], $ext->added);
+	$w->settings->set('caller_photos', true);
+	$ext->_exts['macro-dial-one'][' s '] = [['tag' => ''], ['tag' => 'godial'], ['tag' => 'dial']];
+	$ext->_exts['macro-dial'][' s '] = [['tag' => ''], ['tag' => 'nddialapp'], ['tag' => 'hsdialapp']];
+	ok($p->dialplan($ext));
+	$set = array_values(array_filter($ext->added, fn($a) => $a[0] === 'openprov-caller-photo' && ($a[3]->args[0] ?? '') === 'HASH(__SIPHEADERS,Call-Info)'));
+	eq(1, count($set));
+	eq('<' . $p->baseUrl() . '${OPENPROV_PHOTO_N}-${OPENPROV_PHOTO_T:0:16}.jpg>\;purpose=icon', $set[0][3]->args[1]);
+	$sha = array_values(array_filter($ext->added, fn($a) => ($a[3]->args[0] ?? '') === 'OPENPROV_PHOTO_T'))[0][3]->args[1];
+	eq('${SHA1(' . $p->key() . ':${OPENPROV_PHOTO_N})}', $sha, 'the dialplan hashes what token() hashes');
+	eq(substr(sha1($p->key() . ':201'), 0, 16), $p->token('201'));
+	eq([['macro-dial-one', 'dial'], ['macro-dial', 'nddialapp'], ['macro-dial', 'hsdialapp']], array_map(fn($s) => [$s[0], $s[1]], $ext->spliced), 'no trunk macro here: skipped, not appended');
+	$ext2 = new FakeExt();
+	$ext2->_exts['macro-dialout-trunk'][' s '] = [['tag' => ''], ['tag' => 'nomax']];
+	$ext2->_exts['macro-dial-one'][' s '] = [['tag' => '']];
+	$p->dialplan($ext2);
+	eq([['macro-dialout-trunk', 1, 'openprov-caller-photo-trunk']], array_map(fn($s) => [$s[0], $s[1], $s[2]->args[2]], $ext2->spliced), 'trunks drop it; a missing label is skipped');
+};
+
+$tests['caller photos: Pbx asks Contact Manager\'s global lookup, falling back to the full entry'] = function () {
+	$cm = new class {
+		public array $asked = [];
+		public function getGroups() { return []; }
+		public function lookupNumberByUserID($id, $n) { $this->asked[] = [$id, $n]; return ['212' => ['image' => ['image' => 'PNG212']], '555' => ['id' => 12], '999' => false][$n] ?? false; }
+		public function getEntryByID($id) { return $id === 12 ? ['image' => ['image' => 'PNG12']] : false; }
+	};
+	$pbx = new Pbx(new PDO('sqlite::memory:'), (object) ['Contactmanager' => $cm]);
+	eq('PNG212', $pbx->callerPhoto('212'));
+	eq('PNG12', $pbx->callerPhoto('555'));
+	eq(null, $pbx->callerPhoto('999'));
+	eq([-1, '212'], $cm->asked[0], 'global groups only (-1): never a user\'s private group');
+	eq(null, (new Pbx(new PDO('sqlite::memory:'), null))->callerPhoto('212'), 'no Contact Manager');
 };
 
 // ---- runner --------------------------------------------------------------------

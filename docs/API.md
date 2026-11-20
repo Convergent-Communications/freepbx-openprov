@@ -29,6 +29,7 @@ arguments can be JSON (`devices='["c4fc22a1b2c3"]'`).
 | `keytypes` | `brand?` | Semantic key types (`blf`, `speeddial`, `feature`, ...) |
 | `targets` | | Extensions, feature codes, park slots, ring groups (`category: ring_group`, speed dial, no hint) and toggles a key can point at. Includes `category` and `hint` (whether the BLF light works) for pickers and **permission gating** |
 | `extensions` | | PBX extensions with display names |
+| `phonebooks` | | Contact Manager groups the `phonebook_1`..`phonebook_5` settings can name: `[{id, name, type, owner}]` (`type`: internal, external or private; `owner`: the username for private groups) |
 | `vpn.clients` | | System Admin OpenVPN clients |
 | `templates.list` / `template.get` / `template.save` / `template.copy` / `template.delete` | | `template.save`: `{id?, name, parent?, description?, settings?, raw?, keys?}` |
 | `devices.list` / `device.get` / `device.save` / `device.delete` | | `device.save`: `{id?\|mac, model, template?, name?, enabled?, settings?, raw?, lines?, keys?}` |
@@ -129,6 +130,7 @@ Only with `secrets=true`: the bootstrap credential, `admin_password`, `user_pass
 - **Matching:** templates by name, phones by MAC, features by id, files by content (SHA-256). Anything this PBX has that the file doesn't mention is left alone.
 - **File ids:** settings that point at uploaded files are rewritten to this PBX's copies. A firmware file left out of the export is matched by name to one already uploaded here; otherwise the setting is dropped with a warning (upload it, then import again).
 - **VPN:** a phone's VPN client id that doesn't exist here becomes `auto`, with a warning.
+- **Phonebooks:** a `phonebook_N` naming a Contact Manager group that doesn't exist here is left out, with a warning. Group ids are per PBX: check the books after importing onto a different PBX.
 - **Credentials:** without `secrets`, this PBX keeps its own bootstrap credential and passwords, and phones new to it get a fresh credential, so they bootstrap here (point them at this PBX, or Re-arm them). With `secrets` (only for a file exported with them), the file's values replace this PBX's, so phones moved here keep working with the credential they already have.
 - **Errors:** a row that fails (an extension that doesn't exist here, an unknown model) is reported in `errors`; the rest still import.
 - **Dry run** (the default): makes every change inside a database transaction and rolls it back, so the report shows exactly what would happen, errors included. Module settings are compared, not written.

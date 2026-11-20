@@ -59,7 +59,7 @@ function handler(req, res) {
 	}
 	const headers = {};
 	for (const [k, v] of Object.entries(req.headers)) {
-		if (!HOP.includes(k) && !['x-forwarded-for', 'x-openprov-proxy', 'x-openprov-port'].includes(k)) {
+		if (!HOP.includes(k) && !['x-forwarded-for', 'x-openprov-proxy', 'x-openprov-port', 'x-openprov-local'].includes(k)) {
 			headers[k] = v;
 		}
 	}
@@ -68,6 +68,9 @@ function handler(req, res) {
 	// The port the phone connected to: index.php answers internet addresses
 	// only on internet_ports (443).
 	headers['x-openprov-port'] = String(req.socket.localPort || 0);
+	// The address the phone connected to: caller photos are served only on
+	// the VPN tunnel address.
+	headers['x-openprov-local'] = String(req.socket.localAddress || '').replace(/^::ffff:/, '');
 	const up = http.request({ host: '127.0.0.1', port: cfg.upstreamPort, method: req.method, path, headers }, (ur) => {
 		const out = {};
 		for (const [k, v] of Object.entries(ur.headers)) {
